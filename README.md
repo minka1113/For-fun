@@ -16,6 +16,8 @@ Add sources, summarise them with Claude, and read the summary next to the source
   - Per-source **coverage bars** show how much of each source the summary actually drew on.
   - Draggable divider between the panes.
 - **Review workflow**: pin a claim to see its quotes in the inspector, then mark it ✓ supported or ⚑ flagged. Keyboard: `j`/`k` next/previous claim, `v` verify, `f` flag, `Esc` unpin.
+- **Style rules**: list your own writing rules in plain English (e.g. "Always in past tense", "No more than 250 words"). New summaries are written to follow them, and **Check style** reviews a draft against each one: pass/fail per rule, the exact words that break it, and a suggested fix you can apply or dismiss. Word limits are counted by the app; Claude judges the rest, with the sources at hand so it can spot inference that isn't in them.
+- **Editing**: edit any sentence from the Claim tab. Edits and applied fixes keep the sentence's links to the source, and send it back to unreviewed.
 - **Compilation**: summaries collect in a notebook with your research notes. Export one summary or the whole notebook as Markdown, with each citation as a footnote quoting the source.
 - Everything is stored in your browser (`localStorage`). Nothing is kept on the server.
 
@@ -35,7 +37,7 @@ For a production build: `npm run build && npm start` (serves the app and API on 
 
 ## How it works
 
-- `server/index.ts`: Express server. `POST /api/summarize` sends each source as a plain-text `document` block with citations enabled, then turns Claude's response into **segments**, each with the character ranges it cites. `POST /api/fetch-url` pulls readable text from a web page.
+- `server/index.ts`: Express server. `POST /api/summarize` sends each source as a plain-text `document` block with citations enabled, then turns Claude's response into **segments**, each with the character ranges it cites. `POST /api/check-style` reviews a draft against the style rules using structured outputs, returning per-rule results and exact quotes for each violation. `POST /api/fetch-url` pulls readable text from a web page.
 - `src/components/CompareView.tsx`: the side-by-side view. The source text is split at every citation boundary (`src/lib/spans.ts`) so overlapping citations highlight correctly.
 - `shared/types.ts`: types shared by the server and client.
 

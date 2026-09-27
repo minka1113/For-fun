@@ -1,10 +1,13 @@
 import type { Source, Summary } from "../../shared/types";
+import { DEFAULT_RULES } from "../../shared/rules";
 
 const KEY = "source-lens:v1";
 
 export interface Workspace {
   sources: Source[];
   summaries: Summary[];
+  /** Writing rules, one per entry. */
+  rules: string[];
 }
 
 export function loadWorkspace(): Workspace | null {
@@ -13,6 +16,8 @@ export function loadWorkspace(): Workspace | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Workspace;
     if (!Array.isArray(parsed.sources) || !Array.isArray(parsed.summaries)) return null;
+    // Workspaces saved before style rules existed.
+    if (!Array.isArray(parsed.rules)) parsed.rules = [...DEFAULT_RULES];
     return parsed;
   } catch {
     return null;

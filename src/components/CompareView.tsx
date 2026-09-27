@@ -1,16 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Citation, Segment, Source, Summary, Verdict } from "../../shared/types";
+import { countWords, parseWordLimit, withinLimit } from "../../shared/rules";
+import { checkStyle } from "../lib/api";
 import { coverage, fragmentSource, isUnsupported } from "../lib/spans";
 import { download, summaryToMarkdown } from "../lib/export";
+import { uid } from "../lib/storage";
+import {
+  fullText,
+  locateViolations,
+  marksBySegment,
+  replaceRange,
+  ruleRows,
+  withSegments,
+  type SegmentMark,
+} from "../lib/style";
+import { StylePanel } from "./StylePanel";
 
 interface Props {
   summary: Summary;
   sources: Source[];
+  rules: string[];
   onChange: (summary: Summary) => void;
   onDelete: () => void;
+  onEditRules: () => void;
 }
 
-export function CompareView({ summary, sources, onChange, onDelete }: Props) {
+type DrawerTab = "claim" | "style" | "notes";
+
+export function CompareView({ summary, sources, rules, onChange, onDelete, onEditRules }: Props) {
   const summarySources = useMemo(
     () => summary.sourceIds.map((id) => sources.find((s) => s.id === id)).filter((s): s is Source => Boolean(s)),
     [summary.sourceIds, sources],
@@ -23,6 +40,14 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
   const [showUnsupported, setShowUnsupported] = useState(true);
   const [split, setSplit] = useState(50);
   const [copied, setCopied] = useState(false);
+  const [drawer, setDrawer] = useState<DrawerTab>("claim");
+  const [activeViolation, setActiveViolation] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  // Async work (the style check) must apply its result to the latest summary, not the one it started with.
+  const latest = useRef(summary);
+  latest.current = summary;
 
   const sourcePaneRef = useRef<HTMLDivElement>(null);
   const summaryPaneRef = useRef<HTMLDivElement>(null);
@@ -32,6 +57,8 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
   useEffect(() => {
     setPinned(null);
     setHovered(null);
+    setActiveViolation(null);
+    setCheckError(null);
     setTab(summarySources[0]?.id ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.id]);
@@ -42,6 +69,13 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
     [summary.segments],
   );
   const activeId = hovered ?? pinned;
+
+  const text = useMemo(() => fullText(summary.segments), [summary.segments]);
+  const located = useMemo(() => locateViolations(summary.styleCheck, text), [summary.styleCheck, text]);
+  const marks = useMemo(() => marksBySegment(summary.segments, located), [summary.segments, located]);
+  const rows = useMemo(() => ruleRows(rules, summary, text, located), [rules, summary, text, located]);
+  const wordLimit = rules.map(parseWordLimit).find((l) => l !== null) ?? null;
+  const words = countWords(text);
   const active = activeId ? segById.get(activeId) : undefined;
   const activeSource = summarySources.find((s) => s.id === tab) ?? summarySources[0];
 
@@ -99,6 +133,7 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
       const id = claims[next].id;
       setHovered(null);
       setPinned(id);
+      setDrawer("claim");
       summaryPaneRef.current
         ?.querySelector<HTMLElement>(`[data-seg="${id}"]`)
         ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -122,6 +157,58 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [step, pinned, setVerdict, summary.review]);
+
+  const runStyleCheck = async () => {
+    const claudeRules = rules.filter((r) => !parseWordLimit(r));
+    setChecking(true);
+    setCheckError(null);
+    try {
+      const res = await checkStyle({
+        text,
+        rules: claudeRules,
+        sources: summarySources.map(({ title, text }) => ({ title, text })),
+      });
+      onChange({
+        ...latest.current,
+        styleCheck: {
+          checkedAt: Date.now(),
+          rules: claudeRules,
+          checkedText: text,
+          results: res.results,
+          violations: res.violations.map((v) => ({ ...v, id: uid("v") })),
+        },
+      });
+    } catch (e) {
+      setCheckError((e as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const dropViolation = (s: Summary, id: string): Summary =>
+    s.styleCheck ? { ...s, styleCheck: { ...s.styleCheck, violations: s.styleCheck.violations.filter((v) => v.id !== id) } } : s;
+
+  const applyViolation = (id: string) => {
+    const found = located.find((l) => l.violation.id === id);
+    if (!found?.range) return;
+    const { segments, changed } = replaceRange(summary.segments, found.range.start, found.range.end, found.violation.suggestion);
+    onChange(dropViolation(withSegments(summary, segments, changed), id));
+    setActiveViolation(null);
+  };
+
+  const editSegment = (segId: string, newText: string) => {
+    const segments = summary.segments.map((s) => (s.id === segId ? { ...s, text: newText, edited: true } : s));
+    onChange(withSegments(summary, segments, [segId]));
+  };
+
+  const selectViolation = (id: string) => {
+    setActiveViolation(id);
+    setDrawer("style");
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-violation="${id}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      summaryPaneRef.current?.querySelector(`[data-mark="${id}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  };
 
   const stats = useMemo(() => {
     const cited = summary.segments.filter((s) => s.citations.length > 0).length;
@@ -171,6 +258,11 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
           <Stat label="verified" value={stats.verified} tone="ok" />
           <Stat label="flagged" value={stats.flagged} tone="flag" />
           <Stat label="unsupported" value={stats.unsupported} tone="warn" />
+          <Stat
+            label={wordLimit ? `of ${wordLimit.max} words` : "words"}
+            value={words}
+            tone={wordLimit && !withinLimit(words, wordLimit) ? "flag" : undefined}
+          />
         </div>
         <div className="toolbar">
           <button onClick={() => step(-1)} title="Previous claim (k)">↑ Prev</button>
@@ -215,33 +307,74 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
                   verdict={summary.review[seg.id]}
                   unsupported={showUnsupported && isUnsupported(seg)}
                   citeNumbers={citeNumbers}
+                  marks={marks.get(seg.id)}
+                  activeViolation={activeViolation}
+                  onViolation={selectViolation}
                   onHover={() => setHovered(seg.citations.length || isUnsupported(seg) ? seg.id : null)}
-                  onClick={() => setPinned(pinned === seg.id ? null : seg.id)}
+                  onClick={() => {
+                    setPinned(pinned === seg.id ? null : seg.id);
+                    setDrawer("claim");
+                  }}
                   onCite={(c) => {
                     setPinned(seg.id);
+                    setDrawer("claim");
                     focusCitation(c);
                   }}
                 />
               ))}
             </div>
           </div>
-          <Inspector
-            seg={pinned ? segById.get(pinned) : undefined}
-            sources={summarySources}
-            verdict={pinned ? summary.review[pinned] : undefined}
-            citeNumbers={citeNumbers}
-            onVerdict={(v) => pinned && setVerdict(pinned, v)}
-            onCite={focusCitation}
-            onClose={() => setPinned(null)}
-          />
-          <details className="notes">
-            <summary>Research notes{summary.notes.trim() ? " •" : ""}</summary>
-            <textarea
-              value={summary.notes}
-              placeholder="Your own notes, questions, and follow-ups. Included in exports."
-              onChange={(e) => onChange({ ...summary, notes: e.target.value })}
-            />
-          </details>
+          <div className="drawer">
+            <div className="drawer-tabs" role="tablist">
+              <button role="tab" aria-selected={drawer === "claim"} className={drawer === "claim" ? "on" : ""} onClick={() => setDrawer("claim")}>
+                Claim
+              </button>
+              <button role="tab" aria-selected={drawer === "style"} className={drawer === "style" ? "on" : ""} onClick={() => setDrawer("style")}>
+                Style
+                <StyleBadge rows={rows} />
+              </button>
+              <button role="tab" aria-selected={drawer === "notes"} className={drawer === "notes" ? "on" : ""} onClick={() => setDrawer("notes")}>
+                Notes{summary.notes.trim() ? " •" : ""}
+              </button>
+            </div>
+            <div className="drawer-body">
+              {drawer === "claim" && (
+                <Inspector
+                  seg={pinned ? segById.get(pinned) : undefined}
+                  sources={summarySources}
+                  verdict={pinned ? summary.review[pinned] : undefined}
+                  citeNumbers={citeNumbers}
+                  onVerdict={(v) => pinned && setVerdict(pinned, v)}
+                  onCite={focusCitation}
+                  onEdit={(t) => pinned && editSegment(pinned, t)}
+                  onClose={() => setPinned(null)}
+                />
+              )}
+              {drawer === "style" && (
+                <StylePanel
+                  rows={rows}
+                  checking={checking}
+                  error={checkError}
+                  checkedAt={summary.styleCheck?.checkedAt}
+                  stale={Boolean(summary.styleCheck && summary.styleCheck.checkedText !== text)}
+                  activeViolation={activeViolation}
+                  onCheck={runStyleCheck}
+                  onEditRules={onEditRules}
+                  onSelect={selectViolation}
+                  onApply={applyViolation}
+                  onDismiss={(id) => onChange(dropViolation(summary, id))}
+                />
+              )}
+              {drawer === "notes" && (
+                <textarea
+                  className="notes-input"
+                  value={summary.notes}
+                  placeholder="Your own notes, questions, and follow-ups. Included in exports."
+                  onChange={(e) => onChange({ ...summary, notes: e.target.value })}
+                />
+              )}
+            </div>
+          </div>
         </section>
 
         <div className="divider" onPointerDown={startDrag} role="separator" aria-orientation="vertical" />
@@ -294,6 +427,14 @@ export function CompareView({ summary, sources, onChange, onDelete }: Props) {
   );
 }
 
+function StyleBadge({ rows }: { rows: { status: string }[] }) {
+  const failing = rows.filter((r) => r.status === "fail").length;
+  if (rows.length === 0) return null;
+  if (failing) return <span className="tab-badge fail">{failing}</span>;
+  if (rows.every((r) => r.status === "pass")) return <span className="tab-badge pass">✓</span>;
+  return null;
+}
+
 function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
   return (
     <div className={`stat ${tone ?? ""}`}>
@@ -311,14 +452,19 @@ interface SegmentViewProps {
   verdict?: Verdict;
   unsupported: boolean;
   citeNumbers: Map<Citation, number>;
+  marks?: SegmentMark[];
+  activeViolation: string | null;
+  onViolation: (id: string) => void;
   onHover: () => void;
   onClick: () => void;
   onCite: (c: Citation) => void;
 }
 
-function SegmentView({ seg, active, pinned, linked, verdict, unsupported, citeNumbers, onHover, onClick, onCite }: SegmentViewProps) {
+function SegmentView(props: SegmentViewProps) {
+  const { seg, active, pinned, linked, verdict, unsupported, citeNumbers, onHover, onClick, onCite } = props;
   const interactive = seg.citations.length > 0 || unsupported;
-  if (!interactive) return <span>{seg.text}</span>;
+  const body = <MarkedText text={seg.text} marks={props.marks} active={props.activeViolation} onPick={props.onViolation} />;
+  if (!interactive) return <span>{body}</span>;
   const cls = [
     "seg",
     seg.citations.length ? "cited" : "",
@@ -331,7 +477,7 @@ function SegmentView({ seg, active, pinned, linked, verdict, unsupported, citeNu
   return (
     <>
       <span className={cls} data-seg={seg.id} onMouseEnter={onHover} onClick={onClick}>
-        {seg.text}
+        {body}
         {verdict === "ok" && <span className="verdict-mark ok" aria-label="verified">✓</span>}
         {verdict === "flag" && <span className="verdict-mark flag" aria-label="flagged">⚑</span>}
       </span>
@@ -351,6 +497,45 @@ function SegmentView({ seg, active, pinned, linked, verdict, unsupported, citeNu
       ))}
     </>
   );
+}
+
+/** Segment text with style-violation highlights. */
+function MarkedText({
+  text,
+  marks,
+  active,
+  onPick,
+}: {
+  text: string;
+  marks?: SegmentMark[];
+  active: string | null;
+  onPick: (id: string) => void;
+}) {
+  if (!marks?.length) return <>{text}</>;
+  const sorted = [...marks].sort((a, b) => a.start - b.start);
+  const parts: React.ReactNode[] = [];
+  let pos = 0;
+  for (const m of sorted) {
+    if (m.start < pos) continue; // overlapping violation; the first one wins
+    if (m.start > pos) parts.push(text.slice(pos, m.start));
+    parts.push(
+      <span
+        key={m.id}
+        data-mark={m.id}
+        className={`style-mark ${active === m.id ? "active" : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(m.id);
+        }}
+        title="Breaks a style rule; click for details"
+      >
+        {text.slice(m.start, m.end)}
+      </span>,
+    );
+    pos = m.end;
+  }
+  parts.push(text.slice(pos));
+  return <>{parts}</>;
 }
 
 interface SourceTextProps {
@@ -396,10 +581,14 @@ interface InspectorProps {
   citeNumbers: Map<Citation, number>;
   onVerdict: (v: Verdict | null) => void;
   onCite: (c: Citation) => void;
+  onEdit: (text: string) => void;
   onClose: () => void;
 }
 
-function Inspector({ seg, sources, verdict, citeNumbers, onVerdict, onCite, onClose }: InspectorProps) {
+function Inspector({ seg, sources, verdict, citeNumbers, onVerdict, onCite, onEdit, onClose }: InspectorProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  useEffect(() => setDraft(null), [seg?.id]);
+
   if (!seg) {
     return (
       <div className="inspector empty">
@@ -420,10 +609,33 @@ function Inspector({ seg, sources, verdict, citeNumbers, onVerdict, onCite, onCl
           <button className={verdict === "flag" ? "on flag" : ""} onClick={() => onVerdict(verdict === "flag" ? null : "flag")}>
             ⚑ Flag
           </button>
+          {draft === null && <button onClick={() => setDraft(seg.text)}>Edit</button>}
           <button onClick={onClose} aria-label="Close">✕</button>
         </div>
       </div>
-      <p className="inspector-claim">{seg.text.trim()}</p>
+      {draft === null ? (
+        <p className="inspector-claim">
+          {seg.text.trim()}
+          {seg.edited && <span className="edited-tag">edited</span>}
+        </p>
+      ) : (
+        <div className="edit-box">
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
+          <div className="edit-actions">
+            <span className="muted small">Links to the source stay attached. The sentence goes back to unreviewed.</span>
+            <button onClick={() => setDraft(null)}>Cancel</button>
+            <button
+              className="primary"
+              onClick={() => {
+                onEdit(draft);
+                setDraft(null);
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
       {seg.citations.length === 0 ? (
         <p className="warn-text">No citation. This statement isn't tied to any passage in the sources, so check it or remove it.</p>
       ) : (

@@ -1,4 +1,10 @@
-import type { FetchUrlResponse, SummarizeRequest, SummarizeResponse } from "../../shared/types";
+import type {
+  FetchUrlResponse,
+  StyleCheckRequest,
+  StyleCheckResponse,
+  SummarizeRequest,
+  SummarizeResponse,
+} from "../../shared/types";
 
 async function post<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -13,3 +19,4 @@ async function post<T>(url: string, body: unknown): Promise<T> {
 
 export const summarize = (req: SummarizeRequest) => post<SummarizeResponse>("/api/summarize", req);
 export const fetchUrl = (url: string) => post<FetchUrlResponse>("/api/fetch-url", { url });
+export const checkStyle = (req: StyleCheckRequest) => post<StyleCheckResponse>("/api/check-style", req);

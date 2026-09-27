@@ -1,7 +1,8 @@
 // A self-contained example workspace so the comparison view can be explored without an API key.
 // Both sources are fictional.
 
-import type { Segment, Source, Summary } from "../../shared/types";
+import type { Segment, Source, StyleCheck, Summary } from "../../shared/types";
+import { DEFAULT_RULES, parseWordLimit } from "../../shared/rules";
 
 const REPORT = `Riverton Urban Canopy Assessment — Summary Report
 
@@ -144,17 +145,60 @@ function buildSegments(): Segment[] {
   return segments;
 }
 
+// A style check as Claude might return it for the default rules.
+function demoStyleCheck(segments: Segment[]): StyleCheck {
+  const rules = DEFAULT_RULES.filter((r) => !parseWordLimit(r));
+  const violations = [
+    {
+      rule: 0,
+      quote: "Riverton's tree canopy has fallen from 27 percent",
+      explanation: "Present perfect tense (“has fallen”); the rules require past tense.",
+      suggestion: "Riverton's tree canopy had fallen from 27 percent",
+    },
+    {
+      rule: 0,
+      quote: "which now average 14 percent canopy",
+      explanation: "Present tense (“now average”).",
+      suggestion: "which averaged 14 percent canopy",
+    },
+    {
+      rule: 0,
+      quote: "The parks department recommends reaching 30 percent canopy by 2040, which would mean planting",
+      explanation: "Present tense (“recommends”, “would mean”).",
+      suggestion: "The parks department recommended reaching 30 percent canopy by 2040, which would have required planting",
+    },
+    {
+      rule: 1,
+      quote: "Most residents are expected to support the plan once they understand the health benefits.",
+      explanation: "A prediction about public opinion that neither source makes. This is inference, not a fact from the sources.",
+      suggestion: "",
+    },
+  ];
+  return {
+    checkedAt: Date.UTC(2026, 0, 1),
+    rules,
+    checkedText: segments.map((s) => s.text).join(""),
+    results: [
+      { rule: 0, passed: false, note: "Several sentences use present or present perfect tense." },
+      { rule: 1, passed: false, note: "One sentence adds a prediction that isn't in the sources; everything else is sourced." },
+    ],
+    violations: violations.map((v, i) => ({ ...v, id: `demo-v${i}` })),
+  };
+}
+
 export function demoSummary(): Summary {
+  const segments = buildSegments();
   return {
     id: "demo-summary",
     title: "Tree canopy loss and the council response",
     sourceIds: DEMO_SOURCES.map((s) => s.id),
     style: "detailed",
     focus: "What did the canopy report find, and how is the council reacting?",
-    segments: buildSegments(),
+    segments,
     model: "example",
     createdAt: 0,
     review: {},
     notes: "",
+    styleCheck: demoStyleCheck(segments),
   };
 }

@@ -1,4 +1,5 @@
 import type { Source, Summary } from "../../shared/types";
+import { parseWordLimit } from "../../shared/rules";
 
 interface Props {
   sources: Source[];
@@ -9,6 +10,8 @@ interface Props {
   onToggleAll: (on: boolean) => void;
   onOpen: (view: View) => void;
   onAddSource: () => void;
+  rules: string[];
+  onEditRules: () => void;
   onExportAll: () => void;
   onLoadDemo: () => void;
 }
@@ -52,6 +55,19 @@ export function Sidebar(props: Props) {
           ))}
         </ul>
         <button className="add-btn" onClick={props.onAddSource}>+ Add source</button>
+      </div>
+
+      <div className="side-section">
+        <div className="side-head">
+          <span>Style rules</span>
+          <button className="link" onClick={props.onEditRules}>edit</button>
+        </div>
+        {props.rules.length === 0 && <p className="muted small">No rules. Add writing rules to check drafts against.</p>}
+        <ul className="side-rules">
+          {props.rules.map((r, i) => (
+            <li key={i} title={parseWordLimit(r) ? "Counted by the app" : "Checked by Claude"}>{r}</li>
+          ))}
+        </ul>
       </div>
 
       <div className="side-section grow">

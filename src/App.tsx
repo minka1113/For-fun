@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import type { Source, Summary, SummaryStyle } from "../shared/types";
 import { AddSourceModal } from "./components/AddSourceModal";
 import { CompareView } from "./components/CompareView";
+import { RulesModal } from "./components/RulesModal";
 import { Sidebar, type View } from "./components/Sidebar";
 import { summarize } from "./lib/api";
 import { DEMO_SOURCES, demoSummary } from "./lib/demo";
 import { download, notebookToMarkdown } from "./lib/export";
 import { loadWorkspace, saveWorkspace, uid } from "./lib/storage";
+import { DEFAULT_RULES } from "../shared/rules";
 
 export function App() {
   const initial = useMemo(() => loadWorkspace(), []);
@@ -16,14 +18,16 @@ export function App() {
   const [view, setView] = useState<View>(() =>
     initial?.summaries[0] ? { kind: "summary", id: initial.summaries[0].id } : { kind: "home" },
   );
+  const [rules, setRules] = useState<string[]>(initial?.rules ?? DEFAULT_RULES);
   const [adding, setAdding] = useState(false);
+  const [editingRules, setEditingRules] = useState(false);
 
   const [style, setStyle] = useState<SummaryStyle>("detailed");
   const [focus, setFocus] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => saveWorkspace({ sources, summaries }), [sources, summaries]);
+  useEffect(() => saveWorkspace({ sources, summaries, rules }), [sources, summaries, rules]);
 
   const selectedSources = sources.filter((s) => selected.has(s.id));
 
@@ -51,6 +55,7 @@ export function App() {
         sources: selectedSources.map(({ id, title, text }) => ({ id, title, text })),
         style,
         focus: focus.trim() || undefined,
+        rules,
       });
       const summary: Summary = {
         id: uid("sum"),
@@ -94,6 +99,8 @@ export function App() {
         onToggleAll={(on) => setSelected(new Set(on ? sources.map((s) => s.id) : []))}
         onOpen={setView}
         onAddSource={() => setAdding(true)}
+        rules={rules}
+        onEditRules={() => setEditingRules(true)}
         onExportAll={() => download("research-notebook.md", notebookToMarkdown(summaries, sources))}
         onLoadDemo={loadDemo}
       />
@@ -134,6 +141,8 @@ export function App() {
             <CompareView
               summary={currentSummary}
               sources={sources}
+              rules={rules}
+              onEditRules={() => setEditingRules(true)}
               onChange={(updated) => setSummaries((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))}
               onDelete={() => {
                 setSummaries((prev) => prev.filter((s) => s.id !== currentSummary.id));
@@ -157,6 +166,16 @@ export function App() {
       </main>
 
       {adding && <AddSourceModal onAdd={addSources} onClose={() => setAdding(false)} />}
+      {editingRules && (
+        <RulesModal
+          rules={rules}
+          onSave={(next) => {
+            setRules(next);
+            setEditingRules(false);
+          }}
+          onClose={() => setEditingRules(false)}
+        />
+      )}
     </div>
   );
 }
@@ -214,6 +233,7 @@ function Home({ hasSources, onAdd, onDemo }: { hasSources: boolean; onAdd: () =>
         <li><strong>Add sources</strong>: paste text, upload files, or fetch a URL.</li>
         <li><strong>Summarise</strong> the ones you've ticked, optionally around a research question.</li>
         <li><strong>Compare</strong>: hover a sentence to highlight its source passages, then mark it verified or flagged.</li>
+        <li><strong>Check style</strong>: review the draft against your own writing rules and apply the suggested fixes.</li>
         <li><strong>Compile</strong>: your summaries collect in the notebook and export to Markdown with quoted footnotes.</li>
       </ol>
       <div className="home-actions">
