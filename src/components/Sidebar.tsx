@@ -1,31 +1,59 @@
-import type { Source, Summary } from "../../shared/types";
+import type { Pack, Project } from "../../shared/types";
 import { parseWordLimit } from "../../shared/rules";
 
+export type View =
+  | { kind: "home" }
+  | { kind: "summary"; id: string }
+  | { kind: "source"; id: string }
+  | { kind: "library" }
+  | { kind: "pack"; id: string }
+  | { kind: "paper"; packId: string; paperId: string };
+
 interface Props {
-  sources: Source[];
-  summaries: Summary[];
+  projects: Project[];
+  project: Project;
+  packs: Pack[];
   selected: Set<string>;
   view: View;
+  rules: string[];
+  onSwitchProject: (id: string) => void;
+  onNewProject: () => void;
+  onProjectSettings: () => void;
   onToggle: (id: string) => void;
   onToggleAll: (on: boolean) => void;
   onOpen: (view: View) => void;
   onAddSource: () => void;
-  rules: string[];
   onEditRules: () => void;
   onExportAll: () => void;
   onLoadDemo: () => void;
 }
 
-export type View = { kind: "summary"; id: string } | { kind: "source"; id: string } | { kind: "home" };
-
 export function Sidebar(props: Props) {
-  const { sources, summaries, selected, view } = props;
+  const { project, packs, selected, view } = props;
+  const { sources, summaries } = project;
   const allOn = sources.length > 0 && sources.every((s) => selected.has(s.id));
+  const attached = packs.filter((p) => project.packIds.includes(p.id));
 
   return (
     <aside className="sidebar">
       <div className="brand" onClick={() => props.onOpen({ kind: "home" })}>
         <span className="logo">◐</span> Source Lens
+      </div>
+
+      <div className="side-section project-block">
+        <div className="side-head">
+          <span>Project</span>
+          <button className="link" onClick={props.onNewProject}>+ new</button>
+        </div>
+        <div className="project-row">
+          <select value={project.id} onChange={(e) => props.onSwitchProject(e.target.value)} aria-label="Current project">
+            {props.projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <button onClick={props.onProjectSettings} title="Project settings" aria-label="Project settings">⚙</button>
+        </div>
+        {project.question && <p className="muted small question">“{project.question}”</p>}
       </div>
 
       <div className="side-section">
@@ -37,7 +65,7 @@ export function Sidebar(props: Props) {
             </button>
           )}
         </div>
-        {sources.length === 0 && <p className="muted small">Add articles, papers, or notes to summarise.</p>}
+        {sources.length === 0 && <p className="muted small">Add the articles, papers, or notes this briefing draws on.</p>}
         <ul className="side-list">
           {sources.map((s) => (
             <li key={s.id} className={view.kind === "source" && view.id === s.id ? "current" : ""}>
@@ -59,6 +87,34 @@ export function Sidebar(props: Props) {
 
       <div className="side-section">
         <div className="side-head">
+          <span>Expert knowledge</span>
+          <button className="link" onClick={props.onProjectSettings}>{attached.length ? "change" : "attach"}</button>
+        </div>
+        {attached.length === 0 ? (
+          <p className="muted small">No knowledge packs attached. The expert will use general knowledge only.</p>
+        ) : (
+          <ul className="side-list">
+            {attached.map((p) => {
+              const ready = p.papers.filter((x) => x.status === "ready").length;
+              const busy = p.papers.some((x) => x.status === "processing");
+              return (
+                <li key={p.id} className={view.kind === "pack" && view.id === p.id ? "current" : ""}>
+                  <button className="side-item" onClick={() => props.onOpen({ kind: "pack", id: p.id })}>
+                    <span className="side-title">📚 {p.name}</span>
+                    <span className="side-meta">
+                      {ready} paper{ready === 1 ? "" : "s"}
+                      {busy && " · converting…"}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="side-section">
+        <div className="side-head">
           <span>Style rules</span>
           <button className="link" onClick={props.onEditRules}>edit</button>
         </div>
@@ -72,12 +128,12 @@ export function Sidebar(props: Props) {
 
       <div className="side-section grow">
         <div className="side-head">
-          <span>Notebook</span>
+          <span>Drafts</span>
           {summaries.length > 0 && (
             <button className="link" onClick={props.onExportAll}>export</button>
           )}
         </div>
-        {summaries.length === 0 && <p className="muted small">Summaries you generate are saved here.</p>}
+        {summaries.length === 0 && <p className="muted small">Summaries you generate for this project are saved here.</p>}
         <ul className="side-list">
           {summaries.map((s) => {
             const verified = Object.values(s.review).filter((v) => v === "ok").length;
@@ -87,7 +143,7 @@ export function Sidebar(props: Props) {
                 <button className="side-item" onClick={() => props.onOpen({ kind: "summary", id: s.id })}>
                   <span className="side-title">{s.title}</span>
                   <span className="side-meta">
-                    {s.sourceIds.length} source{s.sourceIds.length === 1 ? "" : "s"}
+                    {s.style} · {s.sourceIds.length} source{s.sourceIds.length === 1 ? "" : "s"}
                     {verified > 0 && <span className="ok"> · ✓{verified}</span>}
                     {flagged > 0 && <span className="flag"> · ⚑{flagged}</span>}
                   </span>
@@ -99,6 +155,7 @@ export function Sidebar(props: Props) {
       </div>
 
       <div className="side-foot">
+        <button className="link" onClick={() => props.onOpen({ kind: "library" })}>📚 Knowledge library</button>
         <button className="link" onClick={props.onLoadDemo}>Load example</button>
       </div>
     </aside>

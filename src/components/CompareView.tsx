@@ -1,33 +1,45 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Citation, Segment, Source, Summary, Verdict } from "../../shared/types";
+import type { BackgroundRef, Citation, KeyPoint, Pack, Project, Segment, Source, SourceRef, Summary, Verdict } from "../../shared/types";
 import { countWords, parseWordLimit, withinLimit } from "../../shared/rules";
 import { checkStyle } from "../lib/api";
-import { coverage, fragmentSource, isUnsupported } from "../lib/spans";
+import { coverage, fragmentSource, isUnsupported, type KeyRange } from "../lib/spans";
 import { download, summaryToMarkdown } from "../lib/export";
 import { uid } from "../lib/storage";
 import {
   fullText,
+  locateInDraft,
   locateViolations,
   marksBySegment,
   replaceRange,
   ruleRows,
   withSegments,
+  type DraftAnnotation,
+  type MarkKind,
   type SegmentMark,
 } from "../lib/style";
 import { StylePanel } from "./StylePanel";
+import { ExpertPane } from "./ExpertPane";
+import { PaperPeek } from "./Library";
 
 interface Props {
   summary: Summary;
   sources: Source[];
   rules: string[];
+  project: Project;
+  packs: Pack[];
   onChange: (summary: Summary) => void;
   onDelete: () => void;
   onEditRules: () => void;
+  /** Create a new draft of this summary built around the expert's priorities. */
+  onRegenerate: (priorities: string[]) => void;
+  onOpenPaper: (packId: string, paperId: string) => void;
 }
+
+const TAG_SHORT: Record<string, string> = { policy: "Policy", new: "New", contradicts: "Contradicts", confirms: "Confirms" };
 
 type DrawerTab = "claim" | "style" | "notes";
 
-export function CompareView({ summary, sources, rules, onChange, onDelete, onEditRules }: Props) {
+export function CompareView({ summary, sources, rules, project, packs, onChange, onDelete, onEditRules, onRegenerate, onOpenPaper }: Props) {
   const summarySources = useMemo(
     () => summary.sourceIds.map((id) => sources.find((s) => s.id === id)).filter((s): s is Source => Boolean(s)),
     [summary.sourceIds, sources],
@@ -44,6 +56,10 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
   const [activeViolation, setActiveViolation] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [expertOpen, setExpertOpen] = useState(Boolean(summary.expert));
+  const [expertSelected, setExpertSelected] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(true);
+  const [peek, setPeek] = useState<BackgroundRef | null>(null);
 
   // Async work (the style check) must apply its result to the latest summary, not the one it started with.
   const latest = useRef(summary);
@@ -59,6 +75,8 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
     setHovered(null);
     setActiveViolation(null);
     setCheckError(null);
+    setExpertSelected(null);
+    setExpertOpen(Boolean(summary.expert));
     setTab(summarySources[0]?.id ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.id]);
@@ -72,7 +90,19 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
 
   const text = useMemo(() => fullText(summary.segments), [summary.segments]);
   const located = useMemo(() => locateViolations(summary.styleCheck, text), [summary.styleCheck, text]);
-  const marks = useMemo(() => marksBySegment(summary.segments, located), [summary.segments, located]);
+  const annotations = useMemo<DraftAnnotation[]>(() => {
+    const review = summary.expert?.review;
+    return [
+      ...located.map((l) => ({ id: l.violation.id, kind: "style" as const, range: l.range })),
+      ...(review ? locateInDraft(review.suggestions, "edit", text) : []),
+      ...(review ? locateInDraft(review.lowValue, "low-value", text) : []),
+    ];
+  }, [located, summary.expert?.review, text]);
+  const marks = useMemo(() => marksBySegment(summary.segments, annotations), [summary.segments, annotations]);
+  const keyPoints = useMemo<KeyPoint[]>(
+    () => (showKey ? [...(summary.expert?.review?.keyPoints ?? []), ...(summary.expert?.highlights ?? [])] : []),
+    [showKey, summary.expert?.review, summary.expert?.highlights],
+  );
   const rows = useMemo(() => ruleRows(rules, summary, text, located), [rules, summary, text, located]);
   const wordLimit = rules.map(parseWordLimit).find((l) => l !== null) ?? null;
   const words = countWords(text);
@@ -106,6 +136,23 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
     },
     [scrollSourceTo],
   );
+
+  const focusSourceRef = useCallback(
+    (ref: SourceRef) => {
+      setTab(ref.sourceId);
+      if (ref.start >= 0) scrollSourceTo(ref.start);
+    },
+    [scrollSourceTo],
+  );
+
+  const pickMark = (id: string, kind: MarkKind) => {
+    if (kind === "style") {
+      selectViolation(id);
+    } else {
+      setExpertOpen(true);
+      setExpertSelected(id);
+    }
+  };
 
   // When the active segment changes, bring its first citation into view.
   useEffect(() => {
@@ -271,6 +318,15 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
             <input type="checkbox" checked={showUnsupported} onChange={(e) => setShowUnsupported(e.target.checked)} />
             Mark unsupported
           </label>
+          {(summary.expert?.review || summary.expert?.highlights.length) && (
+            <label className="toggle">
+              <input type="checkbox" checked={showKey} onChange={(e) => setShowKey(e.target.checked)} />
+              Key passages
+            </label>
+          )}
+          <button className={expertOpen ? "on-accent" : ""} onClick={() => setExpertOpen(!expertOpen)}>
+            ✦ Expert
+          </button>
           <button
             onClick={async () => {
               await navigator.clipboard.writeText(markdown());
@@ -292,7 +348,11 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
         </div>
       </header>
 
-      <div className="compare-body" ref={bodyRef} style={{ gridTemplateColumns: `${split}fr 6px ${100 - split}fr` }}>
+      <div
+        className={`compare-body ${expertOpen ? "with-expert" : ""}`}
+        ref={bodyRef}
+        style={{ gridTemplateColumns: `${split}fr 6px ${100 - split}fr${expertOpen ? " minmax(340px, 30%)" : ""}` }}
+      >
         <section className="pane summary-pane" aria-label="Summary">
           <div className="pane-label">Summary</div>
           <div className="pane-scroll" ref={summaryPaneRef} onMouseLeave={() => setHovered(null)}>
@@ -308,8 +368,8 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
                   unsupported={showUnsupported && isUnsupported(seg)}
                   citeNumbers={citeNumbers}
                   marks={marks.get(seg.id)}
-                  activeViolation={activeViolation}
-                  onViolation={selectViolation}
+                  activeMark={activeViolation ?? expertSelected}
+                  onMark={pickMark}
                   onHover={() => setHovered(seg.citations.length || isUnsupported(seg) ? seg.id : null)}
                   onClick={() => {
                     setPinned(pinned === seg.id ? null : seg.id);
@@ -409,6 +469,12 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
                 segments={summary.segments}
                 activeId={activeId}
                 flagged={summary.review}
+                keyPoints={keyPoints}
+                selectedPoint={expertSelected}
+                onPickPoint={(id) => {
+                  setExpertOpen(true);
+                  setExpertSelected(id);
+                }}
                 onHover={setLinkedFromSource}
                 onPick={(id) => {
                   setPinned(id);
@@ -422,7 +488,35 @@ export function CompareView({ summary, sources, rules, onChange, onDelete, onEdi
             )}
           </div>
         </section>
+
+        {expertOpen && (
+          <ExpertPane
+            summary={summary}
+            latest={() => latest.current}
+            sources={summarySources}
+            project={project}
+            packs={packs}
+            rules={rules}
+            selectedId={expertSelected}
+            onSelect={setExpertSelected}
+            onChange={onChange}
+            onFocusSource={focusSourceRef}
+            onPeekPaper={setPeek}
+            onRegenerate={onRegenerate}
+            onClose={() => setExpertOpen(false)}
+          />
+        )}
       </div>
+      {peek && (
+        <PaperPeek
+          refInfo={peek}
+          onClose={() => setPeek(null)}
+          onOpenInLibrary={() => {
+            setPeek(null);
+            onOpenPaper(peek.packId, peek.paperId);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -453,8 +547,8 @@ interface SegmentViewProps {
   unsupported: boolean;
   citeNumbers: Map<Citation, number>;
   marks?: SegmentMark[];
-  activeViolation: string | null;
-  onViolation: (id: string) => void;
+  activeMark: string | null;
+  onMark: (id: string, kind: MarkKind) => void;
   onHover: () => void;
   onClick: () => void;
   onCite: (c: Citation) => void;
@@ -463,7 +557,7 @@ interface SegmentViewProps {
 function SegmentView(props: SegmentViewProps) {
   const { seg, active, pinned, linked, verdict, unsupported, citeNumbers, onHover, onClick, onCite } = props;
   const interactive = seg.citations.length > 0 || unsupported;
-  const body = <MarkedText text={seg.text} marks={props.marks} active={props.activeViolation} onPick={props.onViolation} />;
+  const body = <MarkedText text={seg.text} marks={props.marks} active={props.activeMark} onPick={props.onMark} />;
   if (!interactive) return <span>{body}</span>;
   const cls = [
     "seg",
@@ -499,7 +593,13 @@ function SegmentView(props: SegmentViewProps) {
   );
 }
 
-/** Segment text with style-violation highlights. */
+const MARK_TITLE: Record<MarkKind, string> = {
+  style: "Breaks a style rule; click for details",
+  edit: "The expert suggests an edit here; click for details",
+  "low-value": "The expert rates this as lower-value; click for details",
+};
+
+/** Segment text with style-violation and expert highlights. */
 function MarkedText({
   text,
   marks,
@@ -509,7 +609,7 @@ function MarkedText({
   text: string;
   marks?: SegmentMark[];
   active: string | null;
-  onPick: (id: string) => void;
+  onPick: (id: string, kind: MarkKind) => void;
 }) {
   if (!marks?.length) return <>{text}</>;
   const sorted = [...marks].sort((a, b) => a.start - b.start);
@@ -522,12 +622,12 @@ function MarkedText({
       <span
         key={m.id}
         data-mark={m.id}
-        className={`style-mark ${active === m.id ? "active" : ""}`}
+        className={`${m.kind}-mark ${active === m.id ? "active" : ""}`}
         onClick={(e) => {
           e.stopPropagation();
-          onPick(m.id);
+          onPick(m.id, m.kind);
         }}
-        title="Breaks a style rule; click for details"
+        title={MARK_TITLE[m.kind]}
       >
         {text.slice(m.start, m.end)}
       </span>,
@@ -543,31 +643,57 @@ interface SourceTextProps {
   segments: Segment[];
   activeId: string | null;
   flagged: Record<string, Verdict>;
+  keyPoints: KeyPoint[];
+  selectedPoint: string | null;
+  onPickPoint: (id: string) => void;
   onHover: (segIds: string[]) => void;
   onPick: (segId: string) => void;
 }
 
-function SourceText({ source, segments, activeId, flagged, onHover, onPick }: SourceTextProps) {
-  const fragments = useMemo(() => fragmentSource(source.text, source.id, segments), [source, segments]);
+function SourceText({ source, segments, activeId, flagged, keyPoints, selectedPoint, onPickPoint, onHover, onPick }: SourceTextProps) {
+  const mine = useMemo(() => keyPoints.filter((k) => k.source.sourceId === source.id && k.source.start >= 0), [keyPoints, source.id]);
+  const keyRanges = useMemo<KeyRange[]>(() => mine.map((k) => ({ id: k.id, start: k.source.start, end: k.source.end })), [mine]);
+  const fragments = useMemo(() => fragmentSource(source.text, source.id, segments, keyRanges), [source, segments, keyRanges]);
+  const startsAt = useMemo(() => new Map(mine.map((k) => [k.source.start, k])), [mine]);
   return (
     <div className="source-text" onMouseLeave={() => onHover([])}>
       {source.origin && <div className="origin">{source.origin}</div>}
       {fragments.map((f) => {
         const text = source.text.slice(f.start, f.end);
-        if (f.segIds.length === 0) return <span key={f.start}>{text}</span>;
+        const point = startsAt.get(f.start);
+        const tag = point && (
+          <button key={`tag-${point.id}`} className={`key-tag ${point.id === selectedPoint ? "selected" : ""}`} onClick={() => onPickPoint(point.id)} title={point.point}>
+            ✦ {point.tags.map((t) => TAG_SHORT[t]).join(" · ") || "Key"}
+          </button>
+        );
+        if (f.segIds.length === 0 && f.pointIds.length === 0) return <span key={f.start}>{text}</span>;
         const isActive = activeId !== null && f.segIds.includes(activeId);
         const isFlagged = f.segIds.some((id) => flagged[id] === "flag");
+        const cls = [
+          f.segIds.length ? "cited" : "",
+          isActive ? "active" : "",
+          isFlagged ? "flagged" : "",
+          f.segIds.length > 1 ? "multi" : "",
+          f.pointIds.length ? "key" : "",
+          selectedPoint && f.pointIds.includes(selectedPoint) ? "key-selected" : "",
+        ].join(" ");
         return (
-          <mark
-            key={f.start}
-            data-start={f.start}
-            className={`${isActive ? "active" : ""} ${isFlagged ? "flagged" : ""} ${f.segIds.length > 1 ? "multi" : ""}`}
-            onMouseEnter={() => onHover(f.segIds)}
-            onClick={() => onPick(f.segIds[0])}
-            title={`Cited by ${f.segIds.length} part${f.segIds.length === 1 ? "" : "s"} of the summary`}
-          >
-            {text}
-          </mark>
+          <span key={f.start}>
+            {tag}
+            <mark
+              data-start={f.start}
+              className={cls}
+              onMouseEnter={() => onHover(f.segIds)}
+              onClick={() => (f.segIds.length ? onPick(f.segIds[0]) : onPickPoint(f.pointIds[0]))}
+              title={
+                f.segIds.length
+                  ? `Cited by ${f.segIds.length} part${f.segIds.length === 1 ? "" : "s"} of the summary`
+                  : "A key passage marked by the expert"
+              }
+            >
+              {text}
+            </mark>
+          </span>
         );
       })}
     </div>

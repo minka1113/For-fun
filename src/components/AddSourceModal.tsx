@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Source } from "../../shared/types";
-import { fetchUrl } from "../lib/api";
+import { extractPdf, fetchUrl } from "../lib/api";
 import { uid } from "../lib/storage";
 
 type Mode = "paste" | "file" | "url";
@@ -16,6 +16,7 @@ export function AddSourceModal({ onAdd, onClose }: Props) {
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reading, setReading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const make = (t: string, body: string, origin?: string): Source => ({
@@ -48,15 +49,33 @@ export function AddSourceModal({ onAdd, onClose }: Props) {
     if (!files?.length) return;
     setError(null);
     const added: Source[] = [];
+    const errors: string[] = [];
     for (const file of Array.from(files)) {
+      if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+        // PDFs are converted on the server: full text, tables transcribed, figures described.
+        setReading(file.name);
+        try {
+          const res = await extractPdf(file);
+          added.push(make(res.title || file.name.replace(/\.[^.]+$/, ""), res.text, file.name));
+        } catch (e) {
+          errors.push(`${file.name}: ${(e as Error).message}`);
+        }
+        continue;
+      }
       if (file.type && !file.type.startsWith("text/") && !/\.(md|markdown|txt|csv|json|html?)$/i.test(file.name)) {
-        setError(`${file.name}: only text files are supported (.txt, .md, .html…). For PDFs, copy the text and paste it.`);
+        errors.push(`${file.name}: upload PDFs or text files (.txt, .md, .html…).`);
         continue;
       }
       const body = (await file.text()).trim();
       if (body) added.push(make(file.name.replace(/\.[^.]+$/, ""), body, file.name));
     }
-    if (added.length) onAdd(added);
+    setReading(null);
+    if (errors.length) setError(errors.join(" "));
+    if (added.length) {
+      // Adding closes the dialog, so report any failures that happened alongside the successes.
+      if (errors.length) alert(`Some files couldn't be added:\n\n${errors.join("\n")}`);
+      onAdd(added);
+    }
   };
 
   return (
@@ -95,11 +114,18 @@ export function AddSourceModal({ onAdd, onClose }: Props) {
         )}
 
         {mode === "file" && (
-          <label className="dropzone">
-            <input type="file" multiple accept=".txt,.md,.markdown,.html,.htm,.csv,.json,text/*" onChange={(e) => onFiles(e.target.files)} />
-            <span>Choose one or more text files</span>
-            <span className="muted">.txt, .md, .html and other plain-text formats</span>
-          </label>
+          reading ? (
+            <div className="dropzone">
+              <span>Reading {reading}…</span>
+              <span className="muted">Converting the PDF to text, with tables transcribed and figures described. This takes a minute or two.</span>
+            </div>
+          ) : (
+            <label className="dropzone">
+              <input type="file" multiple accept=".pdf,.txt,.md,.markdown,.html,.htm,.csv,.json,application/pdf,text/*" onChange={(e) => onFiles(e.target.files)} />
+              <span>Choose one or more files</span>
+              <span className="muted">PDFs (figures and tables included) or text files: .txt, .md, .html</span>
+            </label>
+          )
         )}
 
         {mode === "url" && (

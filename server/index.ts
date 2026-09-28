@@ -1,47 +1,34 @@
 import express from "express";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import type { BetaRequestDocumentBlock, BetaTextBlockParam } from "@anthropic-ai/sdk/resources/beta/messages";
+// claude.js loads .env, so it must be imported before anything reads the environment.
+import { FALLBACK, MODEL, getClient, hasCredentials, resolveSpan, sendApiError } from "./claude.js";
 import { htmlToText } from "./extract.js";
+import { expertRouter } from "./expert.js";
+import { loadPacks, packsRouter } from "./packs.js";
+import { MAX_PDF_BYTES, studyCopyFromPdf } from "./study.js";
 import type {
   Citation,
+  ExtractPdfResponse,
   FetchUrlResponse,
   Segment,
   StyleCheckRequest,
   StyleCheckResponse,
   SummarizeRequest,
   SummarizeResponse,
-  SummaryStyle,
 } from "../shared/types.js";
 
-try {
-  process.loadEnvFile();
-} catch {
-  // No .env file; rely on the real environment.
-}
-
 const PORT = Number(process.env.PORT ?? 8787);
-const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-5";
 const MAX_SOURCE_CHARS = 600_000;
+const MAX_STYLE_CHARS = 4_000;
 
 const app = express();
-app.use(express.json({ limit: "20mb" }));
-
-let client: Anthropic | null = null;
-function getClient(): Anthropic {
-  client ??= new Anthropic();
-  return client;
-}
-
-const STYLE_INSTRUCTIONS: Record<SummaryStyle, string> = {
-  brief: "Write a brief summary: one or two short paragraphs capturing only the most important points.",
-  detailed:
-    "Write a thorough summary organised into short paragraphs. Cover the main arguments, key evidence, figures, and conclusions.",
-  bullets: "Write the summary as a list of concise bullet points, one idea per bullet, each starting with \"- \".",
-};
+app.use(express.json({ limit: "40mb" }));
+app.use("/api/packs", packsRouter);
+app.use("/api/expert", expertRouter);
 
 const SYSTEM_PROMPT = `You are a careful research assistant. You summarise source documents so that a reader can verify every statement against the original text.
 
@@ -55,52 +42,10 @@ function rulesBlock(rules: string[] | undefined): string {
   return `The summary must follow every one of these writing rules:\n${list.map((r, i) => `${i + 1}. ${r}`).join("\n")}`;
 }
 
-/** Map an API failure onto a response the client can show. */
-function sendApiError(res: express.Response, err: unknown, action: string): void {
-  console.error(err);
-  if (err instanceof Anthropic.AuthenticationError) {
-    res.status(401).json({ error: "The Anthropic API rejected the API key. Check ANTHROPIC_API_KEY." });
-  } else if (err instanceof Anthropic.RateLimitError) {
-    res.status(429).json({ error: "Rate limited by the Anthropic API. Wait a moment and try again." });
-  } else if (err instanceof Anthropic.APIError) {
-    res.status(502).json({ error: `Anthropic API error: ${err.message}` });
-  } else {
-    res.status(500).json({ error: `Unexpected server error while ${action}.` });
-  }
-}
-
-function hasCredentials(res: express.Response): boolean {
-  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return true;
-  res.status(500).json({ error: "The server has no ANTHROPIC_API_KEY. Add it to .env and restart." });
-  return false;
-}
-
-/**
- * The API reports character offsets into the document text. Map them onto JS string
- * indices and make sure the span really contains the quoted text, searching nearby
- * if the offsets disagree (e.g. code point vs UTF-16 differences with emoji).
- */
-function resolveSpan(text: string, start: number, end: number, quote: string): { start: number; end: number } {
-  if (text.slice(start, end) === quote) return { start, end };
-
-  // Treat the offsets as code point indices.
-  const codepoints = Array.from(text);
-  const cpStart = codepoints.slice(0, start).join("").length;
-  const cpEnd = cpStart + codepoints.slice(start, end).join("").length;
-  if (text.slice(cpStart, cpEnd) === quote) return { start: cpStart, end: cpEnd };
-
-  // Fall back to finding the quote closest to the reported position.
-  const trimmed = quote.trim();
-  if (trimmed) {
-    let best = -1;
-    for (let i = text.indexOf(trimmed); i !== -1; i = text.indexOf(trimmed, i + 1)) {
-      if (best === -1 || Math.abs(i - start) < Math.abs(best - start)) best = i;
-    }
-    if (best !== -1) return { start: best, end: best + trimmed.length };
-  }
-
-  const s = Math.max(0, Math.min(start, text.length));
-  return { start: s, end: Math.max(s, Math.min(end, text.length)) };
+function prioritiesBlock(priorities: string[] | undefined): string {
+  const list = (priorities ?? []).map((p) => p.trim()).filter(Boolean);
+  if (list.length === 0) return "";
+  return `A subject-matter expert ranked these as the most important points in the sources, most important first. Build the summary around them, in roughly this order, giving less space to other material:\n${list.map((p, i) => `${i + 1}. ${p}`).join("\n")}`;
 }
 
 app.post("/api/summarize", async (req, res) => {
@@ -119,7 +64,9 @@ app.post("/api/summarize", async (req, res) => {
   }
   if (!hasCredentials(res)) return;
 
-  const style: SummaryStyle = body.style in STYLE_INSTRUCTIONS ? body.style : "detailed";
+  const styleInstructions =
+    body.styleInstructions?.trim().slice(0, MAX_STYLE_CHARS) ||
+    "Write a thorough summary organised into short paragraphs. Cover the main arguments, key evidence, figures, and conclusions.";
   const documents: BetaRequestDocumentBlock[] = sources.map((s) => ({
     type: "document",
     source: { type: "text", media_type: "text/plain", data: s.text },
@@ -129,8 +76,9 @@ app.post("/api/summarize", async (req, res) => {
   const instruction: BetaTextBlockParam = {
     type: "text",
     text: [
-      STYLE_INSTRUCTIONS[style],
+      styleInstructions,
       body.focus?.trim() ? `Focus the summary on this question or topic: ${body.focus.trim()}` : "",
+      prioritiesBlock(body.priorities),
       rulesBlock(body.rules),
     ]
       .filter(Boolean)
@@ -143,9 +91,7 @@ app.post("/api/summarize", async (req, res) => {
       max_tokens: 32000,
       system: SYSTEM_PROMPT,
       thinking: { type: "adaptive" },
-      // If the primary model declines, the API retries on a fallback model in the same call.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...FALLBACK,
       messages: [{ role: "user", content: [...documents, instruction] }],
     });
     const message = await stream.finalMessage();
@@ -216,8 +162,7 @@ app.post("/api/check-style", async (req, res) => {
       max_tokens: 32000,
       system: STYLE_SYSTEM_PROMPT,
       thinking: { type: "adaptive" },
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...FALLBACK,
       output_config: { format: betaZodOutputFormat(StyleCheckSchema) },
       messages: [
         {
@@ -298,6 +243,23 @@ app.post("/api/fetch-url", async (req, res) => {
   }
 });
 
+// Convert a PDF source into text (tables transcribed, figures described) for summarising.
+app.post("/api/extract-pdf", express.raw({ type: () => true, limit: MAX_PDF_BYTES }), async (req, res) => {
+  const body = req.body as Buffer;
+  if (!Buffer.isBuffer(body) || body.subarray(0, 5).toString() !== "%PDF-") {
+    res.status(415).json({ error: "That file isn't a PDF." });
+    return;
+  }
+  if (!hasCredentials(res)) return;
+  try {
+    const { title, text } = await studyCopyFromPdf(body);
+    const payload: ExtractPdfResponse = { title, text };
+    res.json(payload);
+  } catch (err) {
+    sendApiError(res, err, "reading the PDF");
+  }
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, model: MODEL, hasKey: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) });
 });
@@ -309,6 +271,9 @@ if (process.env.NODE_ENV === "production" && existsSync(dist)) {
   app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(dist, "index.html")));
 }
 
-app.listen(PORT, () => {
+await loadPacks();
+const server = app.listen(PORT, () => {
   console.log(`Source Lens server on http://localhost:${PORT} (model: ${MODEL})`);
 });
+// Converting a long PDF or answering with a large library can take several minutes.
+server.requestTimeout = 15 * 60 * 1000;

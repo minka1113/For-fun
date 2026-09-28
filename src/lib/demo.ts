@@ -1,7 +1,7 @@
 // A self-contained example workspace so the comparison view can be explored without an API key.
 // Both sources are fictional.
 
-import type { Segment, Source, StyleCheck, Summary } from "../../shared/types";
+import type { ExpertState, Project, Segment, Source, SourceRef, StyleCheck, Summary } from "../../shared/types";
 import { DEFAULT_RULES, parseWordLimit } from "../../shared/rules";
 
 const REPORT = `Riverton Urban Canopy Assessment — Summary Report
@@ -186,13 +186,169 @@ function demoStyleCheck(segments: Segment[]): StyleCheck {
   };
 }
 
+function ref(sourceId: string, quote: string): SourceRef {
+  const text = DEMO_SOURCES.find((s) => s.id === sourceId)!.text;
+  const start = text.indexOf(quote);
+  if (start === -1) throw new Error(`Demo quote not found: ${quote}`);
+  return { sourceId, start, end: start + quote.length, quote };
+}
+
+// An expert review and short chat as the expert might produce them. No knowledge pack is
+// attached to the example, so everything rests on general knowledge and is labelled that way.
+function demoExpert(): ExpertState {
+  const heat = ref("demo-report", "blocks with less than 10 percent canopy were on average 7 degrees Fahrenheit hotter than blocks with more than 40 percent canopy.");
+  const mortality = ref("demo-report", "roughly one in five newly planted street trees currently dies within its first three years, most often from lack of watering.");
+  return {
+    review: {
+      reviewedAt: Date.UTC(2026, 0, 1),
+      reviewedText: buildSegments().map((s) => s.text).join(""),
+      keyPoints: [
+        {
+          id: "demo-kp0",
+          point: "Low-canopy blocks run about 7°F hotter, and low canopy is concentrated in the eastern wards.",
+          why: "Heat exposure is a direct public-health risk. The gap falls on the wards with the oldest housing and most industry, which is where the report says planting should be prioritised.",
+          tags: ["policy"],
+          importance: "high",
+          basis: "general",
+          source: heat,
+          coverage: "covered",
+          draftQuote: "and the least-shaded blocks measured about 7°F hotter than the most-shaded ones.",
+          background: [],
+        },
+        {
+          id: "demo-kp1",
+          point: "About one in five new street trees dies within three years, mostly from lack of watering.",
+          why: "Doubling the planting rate without funding watering and maintenance would lose much of the new stock. The draft mentions it only as a council talking point.",
+          tags: ["policy", "confirms"],
+          importance: "high",
+          basis: "general",
+          source: mortality,
+          coverage: "partial",
+          draftQuote: "pointed to the report's finding that about one in five new street trees dies within three years.",
+          background: [],
+        },
+        {
+          id: "demo-kp2",
+          point: "Developers removing mature trees would have to replace them or pay into a planting fund.",
+          why: "Construction caused almost half the loss, so this rule targets the largest cause the city controls directly. It is also the most contested proposal.",
+          tags: ["policy", "new"],
+          importance: "high",
+          basis: "general",
+          source: ref("demo-report", "The report also recommends updating the city's development code so that projects removing mature trees must replace them on site or pay into a dedicated planting fund."),
+          coverage: "covered",
+          draftQuote: "The proposed tree-replacement rule for developers was the most contested item",
+          background: [],
+        },
+        {
+          id: "demo-kp3",
+          point: "The full set of recommendations would cost about $2.3 million a year.",
+          why: "The figure decision-makers need for the budget vote next month.",
+          tags: ["policy"],
+          importance: "medium",
+          basis: "general",
+          source: ref("demo-article", "The parks department estimated that the full set of recommendations would cost about $2.3 million per year."),
+          coverage: "covered",
+          draftQuote: "at an estimated cost of $2.3 million a year for the full package.",
+          background: [],
+        },
+      ],
+      lowValue: [
+        {
+          id: "demo-lv0",
+          quote: "with windstorms and the emerald ash borer responsible for most of the rest",
+          reason: "Causes the city can't directly control. Worth cutting if you need the words for the maintenance finding.",
+        },
+      ],
+      suggestions: [
+        {
+          id: "demo-sg0",
+          quote: "and the least-shaded blocks measured about 7°F hotter than the most-shaded ones.",
+          replacement:
+            "and blocks with under 10 percent canopy measured about 7°F hotter than those with over 40 percent; the report found heat exposure greatest in the eastern wards.",
+          reason: "Makes the heat finding concrete and ties it to where the report says the city should act.",
+          support: ref("demo-report", "Planting should be prioritised in the eastern wards, where heat exposure is greatest."),
+        },
+      ],
+      notes: [
+        {
+          id: "demo-note0",
+          note: "From general knowledge: emerald ash borer kills nearly all untreated ash trees within a few years of arriving, so further ash losses are likely. The report doesn't say how many ash trees remain.",
+          basis: "general",
+          anchor: { kind: "source", source: ref("demo-report", "the emerald ash borer, which reached the region in 2016") },
+          background: [],
+          createdAt: 0,
+        },
+      ],
+    },
+    highlights: [],
+    notes: [
+      {
+        id: "demo-note1",
+        note: "For scale (general knowledge): many US cities have set canopy goals of 30–40 percent, so a 30 percent target by 2040 sits at the modest end.",
+        basis: "general",
+        anchor: { kind: "draft", quote: "a loss of about 410 acres" },
+        background: [],
+        createdAt: 0,
+      },
+    ],
+    chat: [
+      { id: "demo-m0", role: "user", text: "Is anything important missing from the draft?", createdAt: 0 },
+      {
+        id: "demo-m1",
+        role: "assistant",
+        text: "The draft covers the headline loss and the heat gap well, but it under-plays the maintenance problem: about one in five new street trees dies within three years, mostly from lack of watering. I'd give it its own sentence. (Proposed a context note about funded watering programmes.)",
+        parts: [
+          { text: "The draft covers the headline loss and the heat gap well, but it under-plays the maintenance problem. The report found that ", refs: [] },
+          { text: "about one in five new street trees dies within three years, mostly from lack of watering", refs: [{ kind: "source", ...mortality }] },
+          {
+            text: ". That matters for the planting target: doubling the planting rate without a maintenance budget would lose much of the new stock. I'd give it its own sentence rather than leaving it as a council talking point. From general knowledge, funded watering for young trees is a common fix elsewhere, but that belongs in a context note, not the draft.",
+            refs: [],
+          },
+        ],
+        actions: [
+          {
+            id: "demo-a0",
+            status: "pending",
+            type: "note",
+            note: {
+              id: "demo-note2",
+              note: "From general knowledge: many cities fund two to three years of watering for newly planted street trees, often through contracts or volunteer programmes, to cut early deaths.",
+              basis: "general",
+              anchor: { kind: "source", source: mortality },
+              background: [],
+              createdAt: 0,
+            },
+          },
+        ],
+        createdAt: 0,
+      },
+    ],
+    exportNotes: true,
+  };
+}
+
+export const DEMO_PROJECT_ID = "demo-project";
+
+export function demoProject(): Project {
+  return {
+    id: DEMO_PROJECT_ID,
+    name: "Example: Riverton tree canopy",
+    question: "What did the canopy report find, and how is the council reacting?",
+    packIds: [],
+    brief: "Anything with policy implications, or new information that was not previously known.",
+    sources: DEMO_SOURCES,
+    summaries: [demoSummary()],
+    createdAt: 0,
+  };
+}
+
 export function demoSummary(): Summary {
   const segments = buildSegments();
   return {
     id: "demo-summary",
     title: "Tree canopy loss and the council response",
     sourceIds: DEMO_SOURCES.map((s) => s.id),
-    style: "detailed",
+    style: "Detailed",
     focus: "What did the canopy report find, and how is the council reacting?",
     segments,
     model: "example",
@@ -200,5 +356,6 @@ export function demoSummary(): Summary {
     review: {},
     notes: "",
     styleCheck: demoStyleCheck(segments),
+    expert: demoExpert(),
   };
 }

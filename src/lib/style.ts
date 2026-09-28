@@ -19,22 +19,40 @@ export function locateViolations(check: StyleCheck | undefined, text: string): L
   });
 }
 
-/** A violation highlight clipped to one segment, in that segment's own offsets. */
+export type MarkKind = "style" | "edit" | "low-value";
+
+/** A piece of draft text to highlight, located in the full summary text. */
+export interface DraftAnnotation {
+  id: string;
+  kind: MarkKind;
+  range: { start: number; end: number } | null;
+}
+
+/** Find where each quoted piece of draft text currently is. */
+export function locateInDraft(items: { id: string; quote: string }[], kind: MarkKind, text: string): DraftAnnotation[] {
+  return items.map(({ id, quote }) => {
+    const start = quote ? text.indexOf(quote) : -1;
+    return { id, kind, range: start === -1 ? null : { start, end: start + quote.length } };
+  });
+}
+
+/** A highlight clipped to one segment, in that segment's own offsets. */
 export interface SegmentMark {
   id: string;
+  kind: MarkKind;
   start: number;
   end: number;
 }
 
-export function marksBySegment(segments: Segment[], located: Located[]): Map<string, SegmentMark[]> {
+export function marksBySegment(segments: Segment[], annotations: DraftAnnotation[]): Map<string, SegmentMark[]> {
   const out = new Map<string, SegmentMark[]>();
   let offset = 0;
   for (const seg of segments) {
     const segEnd = offset + seg.text.length;
-    for (const { violation, range } of located) {
+    for (const { id, kind, range } of annotations) {
       if (!range || range.end <= offset || range.start >= segEnd) continue;
       const list = out.get(seg.id) ?? [];
-      list.push({ id: violation.id, start: Math.max(range.start, offset) - offset, end: Math.min(range.end, segEnd) - offset });
+      list.push({ id, kind, start: Math.max(range.start, offset) - offset, end: Math.min(range.end, segEnd) - offset });
       out.set(seg.id, list);
     }
     offset = segEnd;
@@ -147,4 +165,12 @@ export function ruleRows(rules: string[], summary: Summary, text: string, locate
     else status = result.passed ? "pass" : "fail";
     return { rule, checkedBy: "claude", status, note: result.note, violations: open };
   });
+}
+
+/** Replace the first occurrence of `quote` in the draft; null if it's no longer there. */
+export function applyQuoteEdit(summary: Summary, quote: string, replacement: string): Summary | null {
+  const start = quote ? fullText(summary.segments).indexOf(quote) : -1;
+  if (start === -1) return null;
+  const { segments, changed } = replaceRange(summary.segments, start, start + quote.length, replacement);
+  return withSegments(summary, segments, changed);
 }

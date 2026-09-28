@@ -29,13 +29,19 @@ export interface Segment {
 /** A reviewer's verdict on one summary segment after checking it against the source. */
 export type Verdict = "ok" | "flag";
 
-export type SummaryStyle = "brief" | "detailed" | "bullets";
+/** A drafting option offered when generating a summary; editable by the researcher. */
+export interface DraftStyle {
+  id: string;
+  name: string;
+  instructions: string;
+}
 
 export interface Summary {
   id: string;
   title: string;
   sourceIds: string[];
-  style: SummaryStyle;
+  /** Name of the drafting style used. */
+  style: string;
   focus?: string;
   segments: Segment[];
   model: string;
@@ -46,6 +52,8 @@ export interface Summary {
   notes: string;
   /** Result of the most recent style check, if one has been run. */
   styleCheck?: StyleCheck;
+  /** Subject-matter expert review, chat and context notes. */
+  expert?: ExpertState;
 }
 
 /** A place where the draft breaks one of the style rules. */
@@ -90,10 +98,13 @@ export interface StyleCheckResponse {
 
 export interface SummarizeRequest {
   sources: Pick<Source, "id" | "title" | "text">[];
-  style: SummaryStyle;
+  /** Instructions for the chosen drafting style. */
+  styleInstructions: string;
   focus?: string;
   /** Writing rules the draft should follow. */
   rules?: string[];
+  /** Points the draft should prioritise, most important first (from an expert review). */
+  priorities?: string[];
 }
 
 export interface SummarizeResponse {
@@ -105,4 +116,196 @@ export interface FetchUrlResponse {
   title: string;
   text: string;
   url: string;
+}
+
+/* ---------- Projects ---------- */
+
+/** One piece of work, usually several sources feeding one briefing. */
+export interface Project {
+  id: string;
+  name: string;
+  /** The research question; pre-fills the summary focus. */
+  question: string;
+  /** Knowledge packs the expert draws on (usually one or two). */
+  packIds: string[];
+  /** Overrides the packs' default expert briefs when non-empty. */
+  brief: string;
+  sources: Source[];
+  summaries: Summary[];
+  createdAt: number;
+}
+
+/* ---------- Knowledge packs ---------- */
+
+export type PaperStatus = "processing" | "ready" | "error";
+
+export interface Paper {
+  id: string;
+  title: string;
+  fileName: string;
+  kind: "pdf" | "text";
+  status: PaperStatus;
+  error?: string;
+  /** Length of the study copy, in characters. */
+  chars?: number;
+  addedAt: number;
+}
+
+/** A topic library of background papers the expert knows. */
+export interface Pack {
+  id: string;
+  name: string;
+  /** Default statement of what the expert should treat as important. */
+  brief: string;
+  papers: Paper[];
+  createdAt: number;
+}
+
+export interface PaperDetail extends Paper {
+  /** Text of the paper with tables transcribed and figures described, with [Page N] markers. */
+  study: string;
+}
+
+/* ---------- Expert ---------- */
+
+/** Where a piece of expert judgement comes from. */
+export type Basis = "library" | "general" | "both";
+export type ExpertTag = "policy" | "new" | "contradicts" | "confirms";
+
+/** A passage in a background paper. */
+export interface BackgroundRef {
+  packId: string;
+  paperId: string;
+  paperTitle: string;
+  quote: string;
+  page?: number;
+  /** False if the quote couldn't be found in the paper's study copy. */
+  verified: boolean;
+}
+
+/** A passage in one of the project's sources; start is -1 if the quote couldn't be located. */
+export interface SourceRef {
+  sourceId: string;
+  start: number;
+  end: number;
+  quote: string;
+}
+
+export interface KeyPoint {
+  id: string;
+  point: string;
+  why: string;
+  tags: ExpertTag[];
+  importance: "high" | "medium";
+  basis: Basis;
+  source: SourceRef;
+  /** Whether the draft covers it; absent for highlights added from chat. */
+  coverage?: "covered" | "partial" | "missing";
+  draftQuote?: string;
+  background: BackgroundRef[];
+}
+
+export interface LowValue {
+  id: string;
+  quote: string;
+  reason: string;
+}
+
+export interface ExpertSuggestion {
+  id: string;
+  /** Exact draft text to replace. */
+  quote: string;
+  replacement: string;
+  reason: string;
+  /** The source passage supporting the new wording. */
+  support?: SourceRef;
+}
+
+/** Background context kept apart from the draft; never inserted into it. */
+export interface ContextNote {
+  id: string;
+  note: string;
+  basis: Basis;
+  anchor: { kind: "draft"; quote: string } | { kind: "source"; source: SourceRef };
+  background: BackgroundRef[];
+  createdAt: number;
+}
+
+export interface ExpertReview {
+  reviewedAt: number;
+  reviewedText: string;
+  keyPoints: KeyPoint[];
+  lowValue: LowValue[];
+  suggestions: ExpertSuggestion[];
+  /** Context notes the expert proposes; kept only if the researcher accepts them. */
+  notes: ContextNote[];
+}
+
+export type ChatRef = ({ kind: "source" } & SourceRef) | ({ kind: "paper" } & BackgroundRef);
+
+export interface ChatPart {
+  text: string;
+  refs: ChatRef[];
+}
+
+export type ChatAction = { id: string; status: "pending" | "accepted" | "dismissed" } & (
+  | { type: "note"; note: ContextNote }
+  | { type: "edit"; edit: ExpertSuggestion }
+  | { type: "highlight"; point: KeyPoint }
+);
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  /** Plain text, used when replaying the conversation to the model. */
+  text: string;
+  /** Assistant text split into cited parts. */
+  parts?: ChatPart[];
+  actions?: ChatAction[];
+  createdAt: number;
+}
+
+export interface ExpertState {
+  review?: ExpertReview;
+  /** Key passages accepted from chat. */
+  highlights: KeyPoint[];
+  notes: ContextNote[];
+  chat: ChatMessage[];
+  /** Include context notes (clearly labelled) in Markdown exports. */
+  exportNotes: boolean;
+}
+
+export interface ExpertContext {
+  sources: Pick<Source, "id" | "title" | "text">[];
+  packIds: string[];
+  brief: string;
+  question?: string;
+  /** The current draft text. */
+  draft: string;
+  /** Writing rules the draft follows, so suggested wording respects them. */
+  rules?: string[];
+}
+
+export interface ExpertReviewResponse {
+  keyPoints: KeyPoint[];
+  lowValue: LowValue[];
+  suggestions: ExpertSuggestion[];
+  notes: ContextNote[];
+}
+
+export interface ExpertChatRequest extends ExpertContext {
+  history: { role: "user" | "assistant"; text: string }[];
+  message: string;
+}
+
+export interface ExpertChatResponse {
+  parts: ChatPart[];
+  actions: ChatAction[];
+  /** Plain-text version of the reply (including what it proposed), for replaying history. */
+  text: string;
+}
+
+export interface ExtractPdfResponse {
+  title: string;
+  text: string;
 }

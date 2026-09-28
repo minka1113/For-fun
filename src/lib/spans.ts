@@ -1,14 +1,22 @@
 import type { Segment } from "../../shared/types";
 
-/** A run of source text and the summary segments whose citations cover it. */
+/** A run of source text, the summary segments whose citations cover it, and expert key passages over it. */
 export interface Fragment {
   start: number;
   end: number;
   segIds: string[];
+  pointIds: string[];
 }
 
-/** Split a source's text into fragments at every citation boundary. */
-export function fragmentSource(text: string, sourceId: string, segments: Segment[]): Fragment[] {
+/** A passage the expert marked as important. */
+export interface KeyRange {
+  id: string;
+  start: number;
+  end: number;
+}
+
+/** Split a source's text into fragments at every citation and key-passage boundary. */
+export function fragmentSource(text: string, sourceId: string, segments: Segment[], keyRanges: KeyRange[] = []): Fragment[] {
   const ranges: { start: number; end: number; segId: string }[] = [];
   for (const seg of segments) {
     for (const c of seg.citations) {
@@ -16,7 +24,7 @@ export function fragmentSource(text: string, sourceId: string, segments: Segment
     }
   }
   const cuts = new Set([0, text.length]);
-  for (const r of ranges) {
+  for (const r of [...ranges, ...keyRanges]) {
     cuts.add(r.start);
     cuts.add(r.end);
   }
@@ -26,7 +34,8 @@ export function fragmentSource(text: string, sourceId: string, segments: Segment
     const start = points[i];
     const end = points[i + 1];
     const segIds = [...new Set(ranges.filter((r) => r.start <= start && r.end >= end).map((r) => r.segId))];
-    fragments.push({ start, end, segIds });
+    const pointIds = keyRanges.filter((r) => r.start <= start && r.end >= end).map((r) => r.id);
+    fragments.push({ start, end, segIds, pointIds });
   }
   return fragments;
 }
