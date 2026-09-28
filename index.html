@@ -4,6 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Source Lens</title>
+    <script>
+      // If the app fails to load at all (so React never runs), show the errors instead of a blank page.
+      (function () {
+        var errors = [];
+        window.addEventListener("error", function (e) {
+          errors.push(e.message + (e.filename ? " (" + e.filename.split("/").pop() + ":" + e.lineno + ")" : ""));
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+          errors.push(String(e.reason && e.reason.message ? e.reason.message : e.reason));
+        });
+        window.addEventListener("load", function () {
+          setTimeout(function () {
+            var root = document.getElementById("root");
+            if (!root || root.childElementCount > 0) return;
+            var box = document.createElement("div");
+            box.style.cssText = "max-width:640px;margin:10vh auto;padding:0 24px;font:15px/1.5 system-ui,sans-serif";
+            box.innerHTML =
+              "<h1 style='font-size:22px'>The app didn't start</h1>" +
+              "<p>Try refreshing the page (⌘R). If it stays like this, try Google Chrome, or update Safari via Software Update.</p>" +
+              "<p>Details (copy these if you ask for help):</p>";
+            var pre = document.createElement("pre");
+            pre.style.cssText = "white-space:pre-wrap;background:#f3f2ee;padding:12px;border-radius:8px;font-size:12px";
+            pre.textContent = (errors.length ? errors.join("\n") : "No error was reported.") + "\n\nBrowser: " + navigator.userAgent;
+            box.appendChild(pre);
+            root.appendChild(box);
+          }, 4000);
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

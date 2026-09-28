@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { DraftStyle } from "../../shared/types";
 import { DEFAULT_STYLES } from "../../shared/styles";
-import { uid } from "../lib/storage";
+import { copyStyles, uid } from "../lib/storage";
 
 interface Props {
   styles: DraftStyle[];
@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function StylesModal({ styles, onSave, onClose }: Props) {
-  const [draft, setDraft] = useState<DraftStyle[]>(() => structuredClone(styles));
+  const [draft, setDraft] = useState<DraftStyle[]>(() => copyStyles(styles));
   const update = (id: string, patch: Partial<DraftStyle>) => setDraft((d) => d.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   const valid = draft.filter((s) => s.name.trim() && s.instructions.trim());
 
@@ -47,7 +47,7 @@ export function StylesModal({ styles, onSave, onClose }: Props) {
           </button>
         </div>
         <div className="modal-foot">
-          <button className="link" onClick={() => setDraft(structuredClone(DEFAULT_STYLES))}>Reset to defaults</button>
+          <button className="link" onClick={() => setDraft(copyStyles(DEFAULT_STYLES))}>Reset to defaults</button>
           <button className="primary" disabled={valid.length === 0} onClick={() => onSave(valid)}>
             Save styles
           </button>

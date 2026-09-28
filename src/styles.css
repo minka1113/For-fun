@@ -403,3 +403,8 @@ button.on-accent { background: var(--expert-soft); border-color: var(--expert); 
   .compare-body.with-expert { grid-template-columns: 1fr !important; }
   .paper-split { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
 }
+
+/* Crash screen */
+.crash { max-width: 720px; margin: 8vh auto; padding: 0 24px; }
+.crash h1 { font-family: var(--serif); }
+.crash pre { white-space: pre-wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 12px; overflow: auto; }

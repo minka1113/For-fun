@@ -21,13 +21,18 @@ interface WorkspaceV1 {
   rules?: string[];
 }
 
+/** Copy of a style list (plain object copies; avoids structuredClone, which older Safari lacks). */
+export function copyStyles(styles: DraftStyle[]): DraftStyle[] {
+  return styles.map((s) => ({ ...s }));
+}
+
 export function newProject(name: string, sources: Source[] = [], summaries: Summary[] = []): Project {
   return { id: uid("proj"), name, question: "", packIds: [], brief: "", sources, summaries, createdAt: Date.now() };
 }
 
 export function emptyWorkspace(): Workspace {
   const project = newProject("My first briefing");
-  return { version: 2, projects: [project], activeProjectId: project.id, rules: [...DEFAULT_RULES], styles: structuredClone(DEFAULT_STYLES) };
+  return { version: 2, projects: [project], activeProjectId: project.id, rules: [...DEFAULT_RULES], styles: copyStyles(DEFAULT_STYLES) };
 }
 
 export function loadWorkspace(): Workspace {
@@ -45,7 +50,7 @@ export function loadWorkspace(): Workspace {
       projects: [project],
       activeProjectId: project.id,
       rules: Array.isArray(v1.rules) ? v1.rules : [...DEFAULT_RULES],
-      styles: structuredClone(DEFAULT_STYLES),
+      styles: copyStyles(DEFAULT_STYLES),
     };
   } catch {
     return emptyWorkspace();
