@@ -1,47 +1,4 @@
-// Shared Anthropic client setup and helpers used by every route.
-
-import type express from "express";
-import Anthropic from "@anthropic-ai/sdk";
-
-try {
-  process.loadEnvFile();
-} catch {
-  // No .env file; rely on the real environment.
-}
-
-export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-opus-5";
-
-/** Request fields shared by every call: if the primary model declines, the API retries on a fallback model. */
-export const FALLBACK = {
-  betas: ["server-side-fallback-2026-07-01"] as string[],
-  fallbacks: "default" as const,
-};
-
-let client: Anthropic | null = null;
-export function getClient(): Anthropic {
-  client ??= new Anthropic();
-  return client;
-}
-
-export function hasCredentials(res: express.Response): boolean {
-  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return true;
-  res.status(500).json({ error: "The server has no ANTHROPIC_API_KEY. Add it to .env and restart." });
-  return false;
-}
-
-/** Map an API failure onto a response the client can show. */
-export function sendApiError(res: express.Response, err: unknown, action: string): void {
-  console.error(err);
-  if (err instanceof Anthropic.AuthenticationError) {
-    res.status(401).json({ error: "The Anthropic API rejected the API key. Check ANTHROPIC_API_KEY." });
-  } else if (err instanceof Anthropic.RateLimitError) {
-    res.status(429).json({ error: "Rate limited by the Anthropic API. Wait a moment and try again." });
-  } else if (err instanceof Anthropic.APIError) {
-    res.status(502).json({ error: `Anthropic API error: ${err.message}` });
-  } else {
-    res.status(500).json({ error: `Unexpected server error while ${action}.` });
-  }
-}
+// Helpers for locating quoted passages in document text.
 
 /**
  * The API reports character offsets into the document text. Map them onto JS string
