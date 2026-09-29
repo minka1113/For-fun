@@ -1,0 +1,9 @@
+# Terraform local state / caches
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfplan
+# Real values (emails etc.) live here, never committed
+terraform.tfvars
+*.auto.tfvars

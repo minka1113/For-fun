@@ -1,0 +1,75 @@
+#!/bin/bash
+# First-boot setup. Runs once. Deploys after that are done by the SSM document (deploy.tf).
+set -euxo pipefail
+
+dnf install -y docker
+systemctl enable --now docker
+
+# --- persistent data volume -> /var/lib/source-lense -----------------------------------------
+DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${data_volume_id}
+for i in $(seq 1 90); do [ -e "$DEV" ] && break; sleep 5; done
+[ -e "$DEV" ]
+blkid "$DEV" || mkfs.xfs "$DEV"
+mkdir -p /var/lib/source-lense
+grep -q /var/lib/source-lense /etc/fstab || echo "$DEV /var/lib/source-lense xfs defaults,nofail 0 2" >> /etc/fstab
+mount -a
+mkdir -p /var/lib/source-lense/data /etc/source-lense
+chown 1000:1000 /var/lib/source-lense/data   # uid of the "node" user in the container
+
+# --- prepare: fetch secret, log in to ECR, pull the image named in /etc/source-lense/image_tag ---
+cat > /usr/local/bin/source-lense-prepare <<'EOS'
+#!/bin/bash
+set -euo pipefail
+TAG=$(cat /etc/source-lense/image_tag)
+umask 077
+mkdir -p /run/source-lense
+# An unset secret is tolerated (app starts, /api/health reports hasKey:false).
+KEY=$(aws secretsmanager get-secret-value --region ${region} --secret-id ${secret_id} --query SecretString --output text 2>/dev/null || true)
+[ "$KEY" = "None" ] && KEY=""
+printf 'ANTHROPIC_API_KEY=%s\n' "$KEY" > /run/source-lense/env
+aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${ecr_registry}
+docker pull "${ecr_url}:$TAG"
+docker rm -f source-lense 2>/dev/null || true
+docker image prune -af --filter "until=72h" >/dev/null || true
+EOS
+
+cat > /usr/local/bin/source-lense-run <<'EOS'
+#!/bin/bash
+set -euo pipefail
+TAG=$(cat /etc/source-lense/image_tag)
+exec docker run --rm --init --name source-lense \
+  -p 8787:8787 \
+  -v /var/lib/source-lense/data:/app/data \
+  --env-file /run/source-lense/env \
+  -e NODE_ENV=production \
+  --cap-drop=ALL --security-opt no-new-privileges \
+  --log-opt max-size=10m --log-opt max-file=3 \
+  "${ecr_url}:$TAG"
+EOS
+chmod 755 /usr/local/bin/source-lense-prepare /usr/local/bin/source-lense-run
+
+cat > /etc/systemd/system/source-lense.service <<'EOS'
+[Unit]
+Description=Source Lens
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+RequiresMountsFor=/var/lib/source-lense
+ConditionPathExists=/etc/source-lense/image_tag
+StartLimitIntervalSec=0
+
+[Service]
+Environment=HOME=/root
+TimeoutStartSec=600
+ExecStartPre=/usr/local/bin/source-lense-prepare
+ExecStart=/usr/local/bin/source-lense-run
+ExecStop=/usr/bin/docker stop -t 20 source-lense
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOS
+
+systemctl daemon-reload
+systemctl enable source-lense   # starts once the first image tag is deployed
