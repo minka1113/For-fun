@@ -50,6 +50,17 @@ variable "github_repo" {
   default     = "minka1113/For-fun"
 }
 
+variable "github_oidc_repo_subject" {
+  description = <<-EOT
+    Repo part of the GitHub OIDC "sub" claim. This repo uses immutable subjects (owner/repo IDs),
+    so it is not just "owner/name". Find it with:
+      gh api repos/OWNER/REPO/actions/oidc/customization/sub   (sub_claim_prefix, without the leading "repo:")
+    Set to null to use var.github_repo (classic "owner/name" subjects).
+  EOT
+  type        = string
+  default     = "minka1113@310428896/For-fun@1389966947"
+}
+
 variable "deploy_branch" {
   description = "Only this branch may assume the deploy role."
   type        = string
