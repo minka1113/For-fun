@@ -1,6 +1,6 @@
 # Source Lens – AWS infrastructure
 
-Terraform for <https://source-lense.roostercoop.tech>. Deployed by GitHub Actions (`.github/workflows/deploy.yml`).
+Terraform for <https://source-lens.roostercoop.tech>. Deployed by GitHub Actions (`.github/workflows/deploy.yml`).
 
 ```
 Browser ─▶ Route53 ─▶ WAF (rate limit, IP reputation, bad inputs, common rules)

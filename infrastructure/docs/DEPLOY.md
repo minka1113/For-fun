@@ -55,7 +55,7 @@ The role can only be assumed by workflows on the `web` branch of `minka1113/For-
 Push to `web` (or Actions → Deploy → Run workflow, selecting `web`). The workflow builds the image, pushes it to ECR tagged with the commit SHA, and runs the SSM document on the instance, which pulls the image, restarts the service and waits for `/api/health`.
 
 ## 6. First login (derek / sarah)
-1. Open <https://source-lense.roostercoop.tech> → redirected to the Cognito sign-in page.
+1. Open <https://source-lens.roostercoop.tech> → redirected to the Cognito sign-in page.
 2. Username `derek` (or `sarah`) + the emailed temporary password.
 3. Choose a new password (12+ chars, upper/lower/number/symbol).
 4. You land in the app. Sessions last 7 days.
@@ -68,8 +68,8 @@ Re-sending a temp password: `aws cognito-idp admin-create-user --user-pool-id <i
 
 ## Verify
 ```bash
-curl -sI https://source-lense.roostercoop.tech | head -3      # 302 → Cognito
-curl -sI http://source-lense.roostercoop.tech  | head -3      # 301 → https
+curl -sI https://source-lens.roostercoop.tech | head -3      # 302 → Cognito
+curl -sI http://source-lens.roostercoop.tech  | head -3      # 301 → https
 ```
 Then log in and run a summary. `hasKey` in `/api/health` (visible only after login) should be `true`.
 

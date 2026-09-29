@@ -12,7 +12,7 @@ variable "name" {
 variable "domain_name" {
   description = "Public hostname for the app."
   type        = string
-  default     = "source-lense.roostercoop.tech"
+  default     = "source-lens.roostercoop.tech"
 }
 
 variable "hosted_zone_name" {
