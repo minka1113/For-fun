@@ -8,6 +8,9 @@ import type {
   Pack,
   Paper,
   PaperDetail,
+  ResearchChatRequest,
+  ResearchChatResult,
+  ResearchEvent,
   StyleCheckRequest,
   StyleCheckResponse,
   SummarizeRequest,
@@ -59,4 +62,39 @@ export async function uploadPaper(packId: string, file: File): Promise<Paper> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `Upload failed (${res.status})`);
   return data as Paper;
+}
+
+/**
+ * Run one research-chat turn. Progress lines arrive through onStatus while the agent searches and
+ * reads; the promise resolves with the reply and notebook updates when the turn finishes.
+ */
+export async function researchChat(req: ResearchChatRequest, onStatus: (text: string) => void): Promise<ResearchChatResult> {
+  const res = await fetch("/api/research/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut: number;
+    while ((cut = buffer.indexOf("\n\n")) !== -1) {
+      const chunk = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      if (!chunk.startsWith("data: ")) continue; // keep-alive comments
+      const event = JSON.parse(chunk.slice(6)) as ResearchEvent;
+      if (event.type === "status") onStatus(event.text);
+      else if (event.type === "done") return event.result;
+      else throw new Error(event.error);
+    }
+  }
+  throw new Error("The research connection closed before the turn finished. Try again.");
 }

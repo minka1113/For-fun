@@ -140,6 +140,8 @@ export interface Project {
   sources: Source[];
   summaries: Summary[];
   createdAt: number;
+  /** Up-front research: plan, candidate sources, findings and the research chat. */
+  research?: ResearchState;
 }
 
 /* ---------- Knowledge packs ---------- */
@@ -316,3 +318,115 @@ export interface ExtractPdfResponse {
   title: string;
   text: string;
 }
+
+/* ---------- Research ---------- */
+
+export interface SubQuestion {
+  id: string;
+  text: string;
+}
+
+export type SourceKind = "government" | "academic" | "intergovernmental" | "news" | "organisation" | "other";
+
+/** A source the research agent found, waiting to be added to the project or dismissed. */
+export interface Candidate {
+  id: string;
+  url: string;
+  title: string;
+  publisher: string;
+  /** Publication date as found, or "" if unknown. */
+  published: string;
+  kind: SourceKind;
+  relevance: string;
+  /** Reasons for caution (old, partisan, weak method…), or "". */
+  caution: string;
+  paywalled: boolean;
+  /** True if the agent read the page itself rather than only seeing it in search results. */
+  read: boolean;
+  subQuestionIds: string[];
+  status: "new" | "added" | "dismissed";
+  /** The project source created from it, once added. */
+  sourceId?: string;
+  foundAt: number;
+}
+
+/** A working note: something learned, with the passage and page it came from. */
+export interface Finding {
+  id: string;
+  subQuestionId?: string;
+  text: string;
+  quote: string;
+  url: string;
+  sourceTitle: string;
+  /** True if the quote was found word for word in a page the agent read. */
+  verified: boolean;
+  createdAt: number;
+}
+
+export interface Gap {
+  id: string;
+  subQuestionId?: string;
+  text: string;
+}
+
+export interface ResearchRef {
+  url: string;
+  title: string;
+  quote: string;
+}
+
+export interface ResearchPart {
+  text: string;
+  refs: ResearchRef[];
+}
+
+export interface ResearchMessage {
+  id: string;
+  role: "user" | "assistant";
+  /** Plain text, used when replaying the conversation to the model. */
+  text: string;
+  parts?: ResearchPart[];
+  /** Short log of what the agent did this turn ("Searched: …", "Read: …"). */
+  activity?: string[];
+  createdAt: number;
+}
+
+export interface ResearchState {
+  question: string;
+  subQuestions: SubQuestion[];
+  candidates: Candidate[];
+  findings: Finding[];
+  gaps: Gap[];
+  chat: ResearchMessage[];
+}
+
+export interface ResearchChatRequest {
+  state: Pick<ResearchState, "question" | "subQuestions" | "gaps"> & {
+    candidates: Pick<Candidate, "url" | "title" | "status">[];
+    findings: Pick<Finding, "subQuestionId" | "text" | "url">[];
+  };
+  history: { role: "user" | "assistant"; text: string }[];
+  message: string;
+}
+
+/** Changes the agent made to the notebook this turn. Sub-questions are referred to by 1-based number. */
+export interface ResearchUpdates {
+  plan?: { question: string; subQuestions: string[] };
+  candidates: (Omit<Candidate, "id" | "subQuestionIds" | "status" | "foundAt"> & { subQuestions: number[] })[];
+  findings: (Omit<Finding, "id" | "subQuestionId" | "createdAt"> & { subQuestion: number })[];
+  gaps: { text: string; subQuestion: number }[];
+}
+
+export interface ResearchChatResult {
+  parts: ResearchPart[];
+  activity: string[];
+  updates: ResearchUpdates;
+  /** Plain-text version of the reply, for replaying history. */
+  text: string;
+}
+
+/** Server-sent events from POST /api/research/chat. */
+export type ResearchEvent =
+  | { type: "status"; text: string }
+  | { type: "done"; result: ResearchChatResult }
+  | { type: "error"; error: string };

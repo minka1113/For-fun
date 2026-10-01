@@ -4,6 +4,8 @@ import { AddSourceModal } from "./components/AddSourceModal";
 import { CompareView } from "./components/CompareView";
 import { LibraryView, PackView, PaperView } from "./components/Library";
 import { ProjectModal } from "./components/ProjectModal";
+import { ResearchView } from "./components/ResearchView";
+import { emptyResearch } from "./lib/research";
 import { Sidebar, type View } from "./components/Sidebar";
 import { StylesModal } from "./components/StylesModal";
 import { listPacks, summarize } from "./lib/api";
@@ -35,6 +37,7 @@ export function App() {
   const [focus, setFocus] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => setStorageFull(!saveWorkspace(ws)), [ws]);
 
@@ -55,6 +58,21 @@ export function App() {
 
   const updateProject = (fn: (p: Project) => Project) =>
     setWs((w) => ({ ...w, projects: w.projects.map((p) => (p.id === w.activeProjectId ? fn(p) : p)) }));
+  /** Update a specific project, e.g. when a slow research turn finishes after you've switched projects. */
+  const updateProjectById = (id: string, fn: (p: Project) => Project) =>
+    setWs((w) => ({ ...w, projects: w.projects.map((p) => (p.id === id ? fn(p) : p)) }));
+
+  const startBriefing = () => {
+    const research = project.research;
+    if (!research) return;
+    const ids = research.candidates
+      .filter((c) => c.status === "added" && c.sourceId && project.sources.some((s) => s.id === c.sourceId))
+      .map((c) => c.sourceId!);
+    if (!project.question.trim() && research.question.trim()) updateProject((p) => ({ ...p, question: research.question.trim() }));
+    setSelected(new Set(ids));
+    setView({ kind: "home" });
+    setNotice(`Ready to draft: ${ids.length} source${ids.length === 1 ? "" : "s"} from your research selected. Pick a briefing style and click Summarise.`);
+  };
 
   const switchProject = (id: string) => {
     const next = ws.projects.find((p) => p.id === id);
@@ -64,6 +82,7 @@ export function App() {
     setView(next.summaries[0] ? { kind: "summary", id: next.summaries[0].id } : { kind: "home" });
     setFocus("");
     setError(null);
+    setNotice(null);
   };
 
   const addSources = (added: Source[]) => {
@@ -131,7 +150,7 @@ export function App() {
   const currentSummary = view.kind === "summary" ? project.summaries.find((s) => s.id === view.id) : undefined;
   const currentSource = view.kind === "source" ? project.sources.find((s) => s.id === view.id) : undefined;
   const currentPack = view.kind === "pack" ? packs.find((p) => p.id === view.id) : undefined;
-  const inLibrary = view.kind === "library" || view.kind === "pack" || view.kind === "paper";
+  const inLibrary = view.kind === "library" || view.kind === "pack" || view.kind === "paper" || view.kind === "research";
 
   return (
     <div className="app">
@@ -197,6 +216,12 @@ export function App() {
             Your browser's storage is full, so recent changes aren't being saved. Delete old drafts or sources, or export them first.
           </div>
         )}
+        {notice && !inLibrary && (
+          <div className="banner info">
+            {notice}
+            <button className="link" onClick={() => setNotice(null)}>dismiss</button>
+          </div>
+        )}
         {error && (
           <div className="banner error">
             {error}
@@ -206,7 +231,18 @@ export function App() {
         {busy && <div className="progress" />}
 
         <div className="content">
-          {view.kind === "library" ? (
+          {view.kind === "research" ? (
+            <ResearchView
+              key={project.id}
+              project={project}
+              onUpdate={(fn) => {
+                const id = project.id;
+                updateProjectById(id, (p) => ({ ...p, research: fn(p.research ?? emptyResearch()) }));
+              }}
+              onAddSource={(source) => updateProjectById(project.id, (p) => ({ ...p, sources: [...p.sources, source] }))}
+              onStartBriefing={startBriefing}
+            />
+          ) : view.kind === "library" ? (
             <LibraryView packs={packs} onOpenPack={(id) => setView({ kind: "pack", id })} onChanged={refreshPacks} />
           ) : view.kind === "pack" && currentPack ? (
             <PackView
