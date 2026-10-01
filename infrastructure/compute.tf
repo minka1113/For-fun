@@ -40,7 +40,7 @@ data "aws_iam_policy_document" "app" {
   statement {
     sid       = "EcrPull"
     actions   = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
-    resources = [aws_ecr_repository.app.arn]
+    resources = [aws_ecr_repository.app.arn, aws_ecr_repository.home.arn]
   }
 }
 

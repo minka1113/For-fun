@@ -84,3 +84,9 @@ variable "waf_common_rules_count_only" {
   type        = list(string)
   default     = ["SizeRestrictions_BODY", "CrossSiteScripting_BODY"]
 }
+
+variable "home_domain_name" {
+  description = "Public hostname for the home maintenance app (shares the ALB, instance and Cognito login)."
+  type        = string
+  default     = "home.roostercoop.tech"
+}

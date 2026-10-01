@@ -6,6 +6,9 @@ name: Deploy
 on:
   push:
     branches: [web]
+    paths-ignore:
+      - "home-maintenance/**" # deployed by deploy-home.yml
+      - ".github/workflows/deploy-home.yml"
   workflow_dispatch:
 
 concurrency:

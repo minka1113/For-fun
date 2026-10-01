@@ -31,3 +31,11 @@ output "cognito_user_pool_id" {
 output "cognito_login_domain" {
   value = "${aws_cognito_user_pool_domain.this.domain}.auth.${var.aws_region}.amazoncognito.com"
 }
+
+output "home_url" {
+  value = "https://${var.home_domain_name}"
+}
+
+output "home_ecr_repository_url" {
+  value = aws_ecr_repository.home.repository_url
+}

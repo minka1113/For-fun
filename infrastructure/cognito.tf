@@ -75,8 +75,8 @@ resource "aws_cognito_user_pool_client" "alb" {
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["openid", "email"]
   supported_identity_providers         = ["COGNITO"]
-  callback_urls                        = ["https://${var.domain_name}/oauth2/idpresponse"]
-  logout_urls                          = ["https://${var.domain_name}/"]
+  callback_urls                        = ["https://${var.domain_name}/oauth2/idpresponse", "https://${var.home_domain_name}/oauth2/idpresponse"]
+  logout_urls                          = ["https://${var.domain_name}/", "https://${var.home_domain_name}/"]
   prevent_user_existence_errors        = "ENABLED"
   enable_token_revocation              = true
 }
