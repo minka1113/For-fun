@@ -1,7 +1,14 @@
+import type { RuleSet } from "../../shared/types";
 import type { RuleRow } from "../lib/style";
 
 interface Props {
   rows: RuleRow[];
+  ruleSets: RuleSet[];
+  /** The set this draft is checked against. */
+  ruleSetId: string;
+  /** True when the draft's own set was deleted and it fell back to the project default. */
+  fellBack: boolean;
+  onChangeRuleSet: (id: string) => void;
   checking: boolean;
   error: string | null;
   checkedAt?: number;
@@ -22,13 +29,26 @@ export function StylePanel(props: Props) {
 
   return (
     <div className="style-panel">
+      {props.fellBack && (
+        <p className="ruleset-notice">This draft's rule set was deleted, so it's using the project's default set instead.</p>
+      )}
+      <div className="style-head">
+        <label className="toggle">
+          Rules:
+          <select value={props.ruleSetId} onChange={(e) => props.onChangeRuleSet(e.target.value)} aria-label="Rule set for this draft">
+            {props.ruleSets.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        </label>
+        <button className="link" onClick={props.onEditRules}>Manage rule sets</button>
+      </div>
       <div className="style-head">
         <div className="muted small">
           {props.checkedAt ? `Last checked ${new Date(props.checkedAt).toLocaleString()}` : "Not checked yet"}
           {props.stale && <span className="warn-text"> · the draft changed since, so re-check to confirm</span>}
         </div>
         <div className="toolbar">
-          <button className="link" onClick={props.onEditRules}>Edit rules</button>
           {needsClaude && (
             <button className="primary" disabled={props.checking} onClick={props.onCheck}>
               {props.checking ? "Checking…" : props.checkedAt ? "Re-check style" : "Check style"}
@@ -37,7 +57,7 @@ export function StylePanel(props: Props) {
         </div>
       </div>
       {props.error && <p className="error small">{props.error}</p>}
-      {rows.length === 0 && <p className="muted small">No style rules yet. Add some with “Edit rules”.</p>}
+      {rows.length === 0 && <p className="muted small">This rule set has no rules yet. Add some with “Manage rule sets”.</p>}
 
       <ul className="rule-list">
         {rows.map((row, i) => (

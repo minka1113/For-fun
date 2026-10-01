@@ -408,3 +408,14 @@ button.on-accent { background: var(--expert-soft); border-color: var(--expert); 
 .crash { max-width: 720px; margin: 8vh auto; padding: 0 24px; }
 .crash h1 { font-family: var(--serif); }
 .crash pre { white-space: pre-wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 12px; overflow: auto; }
+
+/* Rule sets */
+.ruleset-editor { display: grid; grid-template-columns: 220px 1fr; gap: 14px; min-height: 0; overflow: auto; }
+.ruleset-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ruleset-list button { width: 100%; text-align: left; display: flex; flex-direction: column; border-color: transparent; background: none; }
+.ruleset-list button.on { background: var(--accent-soft); border-color: var(--accent); }
+.ruleset-list .add-btn { border-color: var(--line); border-style: dashed; align-items: center; }
+.ruleset-detail { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ruleset-notice { background: var(--flag-soft); color: var(--flag); border-radius: 6px; padding: 6px 8px; font-size: 12px; margin-bottom: 6px; }
+.style-head select { max-width: 200px; }
+@media (max-width: 640px) { .ruleset-editor { grid-template-columns: 1fr; } }

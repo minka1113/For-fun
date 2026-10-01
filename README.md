@@ -16,7 +16,7 @@ Add sources, summarise them with Claude, and read the draft next to the source t
   - Uncited statements get a wavy underline so you know to check them.
   - Per-source **coverage bars** show how much of each source the draft drew on.
 - **Review workflow**: pin a claim to see its quotes, then mark it ✓ supported or ⚑ flagged. Keyboard: `j`/`k` next/previous claim, `v` verify, `f` flag, `Esc` unpin.
-- **Style rules**: plain-English writing rules (e.g. "Always in past tense", "No more than 250 words"). New drafts follow them, and **Check style** reviews a draft rule by rule with suggested fixes. Word limits are counted by the app; Claude judges the rest.
+- **Rule sets**: named sets of plain-English writing rules (e.g. "Policy briefing": past tense, facts only, max 250 words; "Newsletter": plain language, max 150 words). Pick a set from the **Rules** menu next to Summarise (each project has a default), and the draft follows it. **Check style** reviews a draft rule by rule with suggested fixes, and the Style tab can re-check a draft against a different set. Create, duplicate and edit sets with **Manage rule sets…**. Word limits are counted by the app; Claude judges the rest.
 - **Editing**: edit any sentence from the Claim tab. Edits and applied fixes keep the sentence's links to the source and send it back to unreviewed.
 - **Subject-matter expert** (✦ Expert button on a draft)
   - Draws on the project's **knowledge packs** (your background papers) and on its own trained knowledge, and always labels which: *Library*, *General knowledge* or both. Library citations open the passage in the paper.

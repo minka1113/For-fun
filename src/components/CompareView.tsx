@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BackgroundRef, Citation, KeyPoint, Pack, Project, Segment, Source, SourceRef, Summary, Verdict } from "../../shared/types";
+import type { BackgroundRef, Citation, KeyPoint, Pack, Project, RuleSet, Segment, Source, SourceRef, Summary, Verdict } from "../../shared/types";
 import { countWords, parseWordLimit, withinLimit } from "../../shared/rules";
 import { checkStyle } from "../lib/api";
 import { coverage, fragmentSource, isUnsupported, type KeyRange } from "../lib/spans";
 import { download, summaryToMarkdown } from "../lib/export";
-import { uid } from "../lib/storage";
+import { ruleSetFor, uid } from "../lib/storage";
 import {
   fullText,
   locateInDraft,
@@ -24,12 +24,13 @@ import { PaperPeek } from "./Library";
 interface Props {
   summary: Summary;
   sources: Source[];
-  rules: string[];
+  ruleSets: RuleSet[];
   project: Project;
   packs: Pack[];
   onChange: (summary: Summary) => void;
   onDelete: () => void;
-  onEditRules: () => void;
+  /** Open the rule-set manager, optionally at a given set. */
+  onEditRules: (ruleSetId?: string) => void;
   /** Create a new draft of this summary built around the expert's priorities. */
   onRegenerate: (priorities: string[]) => void;
   onOpenPaper: (packId: string, paperId: string) => void;
@@ -39,7 +40,7 @@ const TAG_SHORT: Record<string, string> = { policy: "Policy", new: "New", contra
 
 type DrawerTab = "claim" | "style" | "notes";
 
-export function CompareView({ summary, sources, rules, project, packs, onChange, onDelete, onEditRules, onRegenerate, onOpenPaper }: Props) {
+export function CompareView({ summary, sources, ruleSets, project, packs, onChange, onDelete, onEditRules, onRegenerate, onOpenPaper }: Props) {
   const summarySources = useMemo(
     () => summary.sourceIds.map((id) => sources.find((s) => s.id === id)).filter((s): s is Source => Boolean(s)),
     [summary.sourceIds, sources],
@@ -89,7 +90,13 @@ export function CompareView({ summary, sources, rules, project, packs, onChange,
   const activeId = hovered ?? pinned;
 
   const text = useMemo(() => fullText(summary.segments), [summary.segments]);
-  const located = useMemo(() => locateViolations(summary.styleCheck, text), [summary.styleCheck, text]);
+  const { set: ruleSet, missing: ruleSetMissing } = ruleSetFor(ruleSets, summary, project);
+  const rules = ruleSet.rules;
+  // Only highlight problems with rules in the draft's current set (it may have been switched since the check).
+  const located = useMemo(
+    () => locateViolations(summary.styleCheck, text).filter((l) => rules.includes(summary.styleCheck!.rules[l.violation.rule])),
+    [summary.styleCheck, text, rules],
+  );
   const annotations = useMemo<DraftAnnotation[]>(() => {
     const review = summary.expert?.review;
     return [
@@ -413,13 +420,17 @@ export function CompareView({ summary, sources, rules, project, packs, onChange,
               {drawer === "style" && (
                 <StylePanel
                   rows={rows}
+                  ruleSets={ruleSets}
+                  ruleSetId={ruleSet.id}
+                  fellBack={ruleSetMissing}
+                  onChangeRuleSet={(id) => onChange({ ...summary, ruleSetId: id })}
                   checking={checking}
                   error={checkError}
                   checkedAt={summary.styleCheck?.checkedAt}
                   stale={Boolean(summary.styleCheck && summary.styleCheck.checkedText !== text)}
                   activeViolation={activeViolation}
                   onCheck={runStyleCheck}
-                  onEditRules={onEditRules}
+                  onEditRules={() => onEditRules(ruleSet.id)}
                   onSelect={selectViolation}
                   onApply={applyViolation}
                   onDismiss={(id) => onChange(dropViolation(summary, id))}

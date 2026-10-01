@@ -29,6 +29,14 @@ export interface Segment {
 /** A reviewer's verdict on one summary segment after checking it against the source. */
 export type Verdict = "ok" | "flag";
 
+/** A named, editable set of writing rules, chosen per draft (e.g. "Policy briefing", "Newsletter"). */
+export interface RuleSet {
+  id: string;
+  name: string;
+  /** Plain-English rules, one per entry. */
+  rules: string[];
+}
+
 /** A drafting option offered when generating a summary; editable by the researcher. */
 export interface DraftStyle {
   id: string;
@@ -42,6 +50,8 @@ export interface Summary {
   sourceIds: string[];
   /** Name of the drafting style used. */
   style: string;
+  /** The rule set this draft follows and is checked against. */
+  ruleSetId?: string;
   focus?: string;
   segments: Segment[];
   model: string;
@@ -130,6 +140,8 @@ export interface Project {
   packIds: string[];
   /** Overrides the packs' default expert briefs when non-empty. */
   brief: string;
+  /** Rule set pre-selected for new drafts in this project. */
+  defaultRuleSetId?: string;
   sources: Source[];
   summaries: Summary[];
   createdAt: number;

@@ -1,4 +1,4 @@
-import type { Pack, Project } from "../../shared/types";
+import type { Pack, Project, RuleSet } from "../../shared/types";
 import { parseWordLimit } from "../../shared/rules";
 
 export type View =
@@ -15,7 +15,9 @@ interface Props {
   packs: Pack[];
   selected: Set<string>;
   view: View;
-  rules: string[];
+  ruleSets: RuleSet[];
+  /** The rule set selected for new drafts. */
+  ruleSet: RuleSet;
   onSwitchProject: (id: string) => void;
   onNewProject: () => void;
   onProjectSettings: () => void;
@@ -115,12 +117,12 @@ export function Sidebar(props: Props) {
 
       <div className="side-section">
         <div className="side-head">
-          <span>Style rules</span>
-          <button className="link" onClick={props.onEditRules}>edit</button>
+          <span>Rules: {props.ruleSet.name}</span>
+          <button className="link" onClick={props.onEditRules}>manage</button>
         </div>
-        {props.rules.length === 0 && <p className="muted small">No rules. Add writing rules to check drafts against.</p>}
+        {props.ruleSet.rules.length === 0 && <p className="muted small">This rule set is empty. Add writing rules to check drafts against.</p>}
         <ul className="side-rules">
-          {props.rules.map((r, i) => (
+          {props.ruleSet.rules.map((r, i) => (
             <li key={i} title={parseWordLimit(r) ? "Counted by the app" : "Checked by Claude"}>{r}</li>
           ))}
         </ul>
@@ -143,7 +145,7 @@ export function Sidebar(props: Props) {
                 <button className="side-item" onClick={() => props.onOpen({ kind: "summary", id: s.id })}>
                   <span className="side-title">{s.title}</span>
                   <span className="side-meta">
-                    {s.style} · {s.sourceIds.length} source{s.sourceIds.length === 1 ? "" : "s"}
+                    {[s.style, props.ruleSets.find((r) => r.id === s.ruleSetId)?.name].filter(Boolean).join(" · ")}
                     {verified > 0 && <span className="ok"> · ✓{verified}</span>}
                     {flagged > 0 && <span className="flag"> · ⚑{flagged}</span>}
                   </span>
