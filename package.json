@@ -9,13 +9,18 @@
     "dev:web": "vite",
     "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "home": "concurrently -n server,web -c blue,green \"npm:home:server\" \"npm:dev:web\"",
+    "home:server": "tsx watch --env-file=.env.home server/index.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:live": "LLM_LIVE=1 node --import tsx --test --test-timeout=600000 tests/live/*.live.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "express": "^5.2.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "unpdf": "^1.8.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {

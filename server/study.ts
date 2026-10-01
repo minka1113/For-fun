@@ -2,7 +2,7 @@
 // in words, so the expert (and the summariser) can work from compact text while the original
 // PDF is kept for checking.
 
-import { FALLBACK, MODEL, getClient } from "./claude.js";
+import { getProvider } from "./llm/index.js";
 
 export const MAX_PDF_BYTES = 30 * 1024 * 1024;
 
@@ -18,30 +18,7 @@ const STUDY_PROMPT = `Produce a faithful study copy of this PDF as Markdown, so 
 - Output only the study copy, with no commentary before or after it.`;
 
 export async function studyCopyFromPdf(pdf: Buffer): Promise<{ title: string; text: string }> {
-  const stream = getClient().beta.messages.stream({
-    model: MODEL,
-    max_tokens: 64000,
-    thinking: { type: "adaptive" },
-    ...FALLBACK,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf.toString("base64") } },
-          { type: "text", text: STUDY_PROMPT },
-        ],
-      },
-    ],
-  });
-  const message = await stream.finalMessage();
-
-  if (message.stop_reason === "refusal") throw new Error("The model declined to process this PDF.");
-  if (message.stop_reason === "max_tokens") throw new Error("This PDF is too long to convert in one pass. Split it into parts.");
-
-  const text = message.content
-    .flatMap((b) => (b.type === "text" ? [b.text] : []))
-    .join("")
-    .trim();
+  const text = await getProvider().pdfToMarkdown(pdf, STUDY_PROMPT);
   if (!text) throw new Error("No text came back for this PDF.");
   const title = text.match(/^#\s+(.+)$/m)?.[1].trim() ?? "";
   return { title, text };

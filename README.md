@@ -41,6 +41,31 @@ No key yet? Click **Load example** in the sidebar. It opens an example project w
 
 For a production build: `npm run build && npm start` (serves the app and API on port 8787).
 
+## Choosing the model
+
+The model that does the work (summaries, style checks, PDF conversion, the expert) is set by `LLM_PROVIDER`:
+
+| `LLM_PROVIDER` | Runs on | Settings |
+| --- | --- | --- |
+| `anthropic` (default) | Claude | `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL` |
+| `local` | Any OpenAI-compatible chat server (here, the self-hosted Nemotron) | `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`, optional `LOCAL_LLM_API_KEY`, `LOCAL_LLM_TIMEOUT_MS` |
+
+`npm run home` starts the app on the home Nemotron model at `llm.roostercoop.tech`, using the settings in `.env.home`. `npm run dev` uses whatever `.env` says (Anthropic unless you set `LLM_PROVIDER`). Values already set in your shell win over both files.
+
+The local model has no citations feature, PDF input or enforced JSON, so the app supplies those itself:
+
+- **Citations**: the model is asked to cite inline with verbatim quotes. Each quote is looked up in the source and dropped if it isn't really there, so a shown citation always points at real text. Statements whose quote can't be verified show as uncited.
+- **Structured replies** (style check, expert review): the schema goes in the prompt and the reply is validated, with one retry.
+- **PDFs**: text is extracted and marked by page. Tables come out as running text, figures aren't described, and scanned PDFs are rejected. Use the Anthropic provider for PDFs with important tables or figures. The expert's "view original PDF" tool is unavailable.
+- **Limits**: the size limits above are set for Claude's large context window. If your local server has a smaller context, big projects fail with the server's error.
+
+## Tests
+
+```bash
+npm test            # unit and route tests; no network or API key needed
+npm run test:live   # smoke tests against the real home model (slow; needs it running)
+```
+
 ## Where things are stored
 
 - **Projects, sources, drafts and settings** live in your browser (`localStorage`). Browsers allow a few megabytes; the app warns you if storage fills up.
@@ -48,7 +73,7 @@ For a production build: `npm run build && npm start` (serves the app and API on 
 
 ## Costs
 
-Prices depend on the model (`claude-opus-5` by default; set `ANTHROPIC_MODEL` to change it). Rough guide:
+These are for the Anthropic provider (`claude-opus-5` by default; set `ANTHROPIC_MODEL` to change it). The local model costs nothing per request. Rough guide:
 
 - A draft or style check: a few cents to around 10¢ for typical articles.
 - Converting a PDF to a study copy: roughly 20–40¢ per short paper, once.
@@ -58,9 +83,10 @@ Every request enables the API's server-side fallback, so if the model declines a
 
 ## How it works
 
-- `server/index.ts`: routes for summarising (plain-text `document` blocks with citations; output split into cited **segments**), style checks (structured outputs), PDF extraction for sources, and URL import.
+- `server/llm/`: the model providers behind one interface (`types.ts`): `anthropic.ts` (Claude) and `local.ts` (OpenAI-compatible servers), chosen by `config.ts`. Routes never call a vendor SDK directly.
+- `server/app.ts`: routes for summarising (plain-text `document` blocks with citations; output split into cited **segments**), style checks (structured outputs), PDF extraction for sources, and URL import.
 - `server/expert.ts`: the expert. Papers are labelled `[B1]…` and sources `[S1]…` in document titles, so citations and tool inputs map back reliably. Review uses structured outputs; chat runs a tool loop (`suggest_edit`, `add_context_note`, `mark_key_passage`, `view_original_pdf`) whose actions come back to the browser as suggestion cards. Background papers and sources use one-hour prompt caching.
-- `server/packs.ts` and `server/study.ts`: knowledge-pack storage and the PDF-to-study-copy conversion queue.
+- `server/index.ts` starts the server. `server/packs.ts` and `server/study.ts`: knowledge-pack storage and the PDF-to-study-copy conversion queue.
 - `src/components/CompareView.tsx` and `ExpertPane.tsx`: the side-by-side view and the expert panel. Source text is split at every citation and key-passage boundary (`src/lib/spans.ts`) so overlapping highlights render correctly.
 - `shared/`: types, default rules and drafting styles shared by server and browser.
 

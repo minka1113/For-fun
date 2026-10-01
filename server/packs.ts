@@ -9,7 +9,7 @@ import path from "node:path";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { Pack, Paper, PaperDetail } from "../shared/types.js";
-import { hasCredentials } from "./claude.js";
+import { hasCredentials } from "./respond.js";
 import { MAX_PDF_BYTES, studyCopyFromPdf } from "./study.js";
 
 const ROOT = path.resolve(import.meta.dirname, "../data/packs");

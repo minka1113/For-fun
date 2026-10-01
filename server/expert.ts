@@ -7,15 +7,6 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
-import type {
-  BetaMessageParam,
-  BetaRequestDocumentBlock,
-  BetaTextBlock,
-  BetaTool,
-  BetaToolResultBlockParam,
-  BetaToolUseBlock,
-} from "@anthropic-ai/sdk/resources/beta/messages";
 import type {
   BackgroundRef,
   ChatAction,
@@ -29,12 +20,13 @@ import type {
   KeyPoint,
   SourceRef,
 } from "../shared/types.js";
-import { FALLBACK, MODEL, findQuote, getClient, hasCredentials, pageAt, resolveSpan, sendApiError } from "./claude.js";
+import { type LlmDoc, type LlmMessage, type LlmTextBlock, type ToolCall, type ToolDef, type ToolResult, getProvider } from "./llm/index.js";
 import { type LoadedPaper, loadOriginalPdf, loadPapers } from "./packs.js";
+import { hasCredentials, sendApiError } from "./respond.js";
+import { findQuote, pageAt, resolveSpan } from "./spans.js";
 
 /** Roughly 600k tokens: leaves room in the 1M context for the conversation and thinking. */
 const MAX_CONTEXT_CHARS = 2_400_000;
-const CACHE_1H = { type: "ephemeral", ttl: "1h" } as const;
 
 interface Ctx {
   req: ExpertContext;
@@ -46,24 +38,22 @@ interface Ctx {
 // Papers are labelled [B1], [B2]… and sources [S1], [S2]… in their document titles. Citations
 // and tool inputs refer to these labels, which map back reliably whatever the document order.
 
-function documents(ctx: Ctx, citations: boolean): BetaRequestDocumentBlock[] {
-  const papers: BetaRequestDocumentBlock[] = ctx.papers.map((p, i) => ({
-    type: "document",
-    source: { type: "text", media_type: "text/plain", data: p.study },
+function documents(ctx: Ctx, citations: boolean): LlmDoc[] {
+  const papers: LlmDoc[] = ctx.papers.map((p, i) => ({
     title: `[B${i + 1}] ${p.paper.title}`,
+    text: p.study,
     context: `Background paper from the "${p.pack.name}" knowledge pack.`,
-    citations: { enabled: citations },
+    citations,
   }));
-  const sources: BetaRequestDocumentBlock[] = ctx.req.sources.map((s, i) => ({
-    type: "document",
-    source: { type: "text", media_type: "text/plain", data: s.text },
+  const sources: LlmDoc[] = ctx.req.sources.map((s, i) => ({
     title: `[S${i + 1}] ${s.title}`,
+    text: s.text,
     context: "Source document for the briefing. The draft may only contain facts from the sources.",
-    citations: { enabled: citations },
+    citations,
   }));
-  // Cache the background library and the sources for an hour, so follow-up questions re-read them cheaply.
-  if (papers.length) papers[papers.length - 1].cache_control = CACHE_1H;
-  if (sources.length) sources[sources.length - 1].cache_control = CACHE_1H;
+  // Cache the background library and the sources, so follow-up questions re-read them cheaply.
+  if (papers.length) papers[papers.length - 1].cache = true;
+  if (sources.length) sources[sources.length - 1].cache = true;
   return [...papers, ...sources];
 }
 
@@ -209,26 +199,18 @@ expertRouter.post("/review", async (req, res) => {
   const ctx = await loadContext(req, res);
   if (!ctx) return;
   try {
-    const stream = getClient().beta.messages.stream({
-      model: MODEL,
-      max_tokens: 32000,
+    const result = await getProvider().structured({
       system: systemPrompt(ctx),
-      thinking: { type: "adaptive" },
-      ...FALLBACK,
-      output_config: { format: betaZodOutputFormat(ReviewSchema) },
-      messages: [
-        {
-          role: "user",
-          content: [...documents(ctx, false), { type: "text", text: `${draftBlock(ctx.req.draft)}\n\n${REVIEW_TASK}` }],
-        },
-      ],
+      docs: documents(ctx, false),
+      prompt: `${draftBlock(ctx.req.draft)}\n\n${REVIEW_TASK}`,
+      schema: ReviewSchema,
+      maxTokens: 32000,
     });
-    const message = await stream.finalMessage();
-    if (message.stop_reason === "refusal") {
+    if (result.refused) {
       res.status(422).json({ error: "The model declined to review this draft." });
       return;
     }
-    const out = message.parsed_output;
+    const out = result.value;
     if (!out) {
       res.status(502).json({ error: "The expert review came back in an unexpected format. Try again." });
       return;
@@ -292,7 +274,8 @@ function contextNote(
 
 /* ---------- Chat ---------- */
 
-const CHAT_GUIDE = `
+function chatGuide(canViewPdf: boolean): string {
+  return `
 
 ## In this conversation
 Answer the researcher's questions about the sources, the draft and the field. Be concise and direct, as an expert colleague would be. Cite the documents you draw on.
@@ -300,9 +283,9 @@ Answer the researcher's questions about the sources, the draft and the field. Be
 You can act on the page with tools. Every action is shown to the researcher as a suggestion they accept or dismiss, so propose freely but only when it genuinely helps:
 - suggest_edit: change wording in the draft (source facts only, supported by a source quote).
 - add_context_note: record background the researcher should know that must not go in the draft.
-- mark_key_passage: highlight an important passage in a source.
-- view_original_pdf: open a background paper's original PDF when its figures or tables matter and the study copy's description is not enough. Use it sparingly; it is slow and costly.
+- mark_key_passage: highlight an important passage in a source.${canViewPdf ? "\n- view_original_pdf: open a background paper's original PDF when its figures or tables matter and the study copy's description is not enough. Use it sparingly; it is slow and costly." : ""}
 Prefer these tools over writing out suggested wording or notes in your reply.`;
+}
 
 const EditInput = z.object({
   draft_quote: z.string(),
@@ -343,14 +326,13 @@ const bgSchema = {
 };
 const basisSchema = { type: "string", enum: ["library", "general", "both"], description: "What this rests on: the background library, your general knowledge, or both." };
 
-// Tool inputs stream as they are generated; each input is validated with zod before it is used.
-const TOOLS: BetaTool[] = [
+// Each tool input is validated with zod before it is used.
+const TOOLS: ToolDef[] = [
   {
     name: "suggest_edit",
     description:
       "Propose replacing a piece of the draft with new wording. The replacement must contain only facts from the sources and be supported by source_quote.",
-    eager_input_streaming: true,
-    input_schema: {
+    schema: {
       type: "object",
       properties: {
         draft_quote: { type: "string", description: "Exact text from the current draft to replace." },
@@ -366,8 +348,7 @@ const TOOLS: BetaTool[] = [
   {
     name: "add_context_note",
     description: "Record background context the researcher should know. It is kept separate from the draft and never inserted into it.",
-    eager_input_streaming: true,
-    input_schema: {
+    schema: {
       type: "object",
       properties: {
         anchor: { type: "string", enum: ["draft", "source"], description: "Attach the note to draft text or to a source passage." },
@@ -384,8 +365,7 @@ const TOOLS: BetaTool[] = [
   {
     name: "mark_key_passage",
     description: "Highlight an important passage in a source, with why it matters.",
-    eager_input_streaming: true,
-    input_schema: {
+    schema: {
       type: "object",
       properties: {
         source: { type: "string", description: 'Source label, e.g. "S1".' },
@@ -404,8 +384,7 @@ const TOOLS: BetaTool[] = [
   {
     name: "view_original_pdf",
     description: "Load the original PDF of a background paper to inspect its figures, tables or layout directly.",
-    eager_input_streaming: true,
-    input_schema: {
+    schema: {
       type: "object",
       properties: { paper: { type: "string", description: 'Paper label, e.g. "B3".' } },
       required: ["paper"],
@@ -430,63 +409,54 @@ expertRouter.post("/chat", async (req, res) => {
   const history = (body.history ?? []).filter((m) => m.text.trim());
   if (history[0]?.role === "assistant") history.shift();
   const current = `${draftBlock(ctx.req.draft)}\n\n${body.message.trim()}`;
-  const messages: BetaMessageParam[] = [];
+  const messages: LlmMessage[] = [];
   const docs = documents(ctx, true);
   if (history.length === 0) {
-    messages.push({ role: "user", content: [...docs, { type: "text", text: current }] });
+    messages.push({ role: "user", text: current, docs });
   } else {
-    messages.push({ role: "user", content: [...docs, { type: "text", text: history[0].text }] });
+    messages.push({ role: "user", text: history[0].text, docs });
     for (const m of history.slice(1)) {
       const last = messages[messages.length - 1];
       if (last.role === m.role) {
         // Merge consecutive same-role turns (e.g. after a failed reply) so roles alternate.
-        last.content = [...(typeof last.content === "string" ? [{ type: "text" as const, text: last.content }] : last.content), { type: "text", text: m.text }];
+        last.text += `\n\n${m.text}`;
       } else {
-        messages.push({ role: m.role, content: m.text });
+        messages.push({ role: m.role, text: m.text });
       }
     }
-    if (messages[messages.length - 1].role === "user") messages.push({ role: "assistant", content: "(No reply.)" });
-    messages.push({ role: "user", content: current });
+    if (messages[messages.length - 1].role === "user") messages.push({ role: "assistant", text: "(No reply.)" });
+    messages.push({ role: "user", text: current });
   }
 
   const parts: ChatPart[] = [];
   const actions: ChatAction[] = [];
   const summaries: string[] = [];
+  const provider = getProvider();
+  const tools = TOOLS.filter((t) => t.name !== "view_original_pdf" || provider.capabilities.pdfInput);
+  const system = systemPrompt(ctx) + chatGuide(provider.capabilities.pdfInput);
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const stream = getClient().beta.messages.stream({
-        model: MODEL,
-        max_tokens: 16000,
-        system: systemPrompt(ctx) + CHAT_GUIDE,
-        tools: TOOLS,
-        thinking: { type: "adaptive" },
-        cache_control: CACHE_1H,
-        ...FALLBACK,
-        messages,
-      });
-      const message = await stream.finalMessage();
-      if (message.stop_reason === "refusal") {
+      const result = await provider.generate({ system, messages, tools, maxTokens: 16000, cache: true });
+      if (result.stopReason === "refusal") {
         res.status(422).json({ error: "The model declined to answer that." });
         return;
       }
 
-      for (const block of message.content) {
-        if (block.type === "text" && block.text) parts.push(chatPart(ctx, block));
+      for (const block of result.blocks) {
+        if (block.text) parts.push(chatPart(ctx, block));
       }
-      if (message.stop_reason === "max_tokens") {
+      if (result.stopReason === "max_tokens") {
         parts.push({ text: "\n\n(The reply was cut off because it ran too long.)", refs: [] });
         break;
       }
-      if (message.stop_reason !== "tool_use") break;
+      if (result.stopReason !== "tool_use") break;
 
-      const results: BetaToolResultBlockParam[] = [];
-      for (const block of message.content) {
-        if (block.type !== "tool_use") continue;
-        results.push(await runTool(ctx, block, actions, summaries));
+      const results: ToolResult[] = [];
+      for (const call of result.toolCalls) {
+        results.push(await runTool(ctx, call, actions, summaries));
       }
-      messages.push({ role: "assistant", content: message.content });
-      messages.push({ role: "user", content: results });
+      messages.push(result.assistant, { role: "tool", results });
     }
 
     const text = [parts.map((p) => p.text).join(""), ...summaries].filter(Boolean).join("\n\n");
@@ -497,30 +467,27 @@ expertRouter.post("/chat", async (req, res) => {
   }
 });
 
-function chatPart(ctx: Ctx, block: BetaTextBlock): ChatPart {
+function chatPart(ctx: Ctx, block: LlmTextBlock): ChatPart {
   const refs: ChatRef[] = [];
-  for (const c of block.citations ?? []) {
-    const title = c.type === "char_location" || c.type === "page_location" ? (c.document_title ?? "") : "";
-    if (c.type === "char_location" && labelNumber(title, "S") !== null) {
-      const source = sourceFor(ctx, title);
+  for (const c of block.citations) {
+    const hasSpan = c.start !== undefined && c.end !== undefined;
+    if (hasSpan && labelNumber(c.docTitle, "S") !== null) {
+      const source = sourceFor(ctx, c.docTitle);
       if (!source) continue;
-      const span = resolveSpan(source.text, c.start_char_index, c.end_char_index, c.cited_text);
-      refs.push({ kind: "source", sourceId: source.id, ...span, quote: c.cited_text });
-    } else if (c.type === "char_location" || c.type === "page_location") {
-      const p = paperFor(ctx, title);
+      const span = resolveSpan(source.text, c.start!, c.end!, c.quote);
+      refs.push({ kind: "source", sourceId: source.id, ...span, quote: c.quote });
+    } else {
+      const p = paperFor(ctx, c.docTitle);
       if (!p) continue;
-      const page =
-        c.type === "page_location"
-          ? c.start_page_number
-          : pageAt(p.study, resolveSpan(p.study, c.start_char_index, c.end_char_index, c.cited_text).start);
-      refs.push({ kind: "paper", packId: p.pack.id, paperId: p.paper.id, paperTitle: p.paper.title, quote: c.cited_text, page, verified: true });
+      const page = c.page ?? (hasSpan ? pageAt(p.study, resolveSpan(p.study, c.start!, c.end!, c.quote).start) : undefined);
+      refs.push({ kind: "paper", packId: p.pack.id, paperId: p.paper.id, paperTitle: p.paper.title, quote: c.quote, page, verified: true });
     }
   }
   return { text: block.text, refs };
 }
 
-async function runTool(ctx: Ctx, block: BetaToolUseBlock, actions: ChatAction[], summaries: string[]): Promise<BetaToolResultBlockParam> {
-  const fail = (message: string): BetaToolResultBlockParam => ({ type: "tool_result", tool_use_id: block.id, content: message, is_error: true });
+async function runTool(ctx: Ctx, block: ToolCall, actions: ChatAction[], summaries: string[]): Promise<ToolResult> {
+  const fail = (message: string): ToolResult => ({ id: block.id, text: message, isError: true });
   const shown = "Shown to the researcher as a suggestion card. They will accept or dismiss it.";
   const id = randomUUID();
 
@@ -537,7 +504,7 @@ async function runTool(ctx: Ctx, block: BetaToolUseBlock, actions: ChatAction[],
         edit: { id, quote: v.draft_quote, replacement: v.replacement, reason: v.reason, support: sourceRef(ctx, v.source, v.source_quote) ?? undefined },
       });
       summaries.push(`(Suggested an edit: replace "${v.draft_quote}" with "${v.replacement}".)`);
-      return { type: "tool_result", tool_use_id: block.id, content: shown };
+      return { id: block.id, text: shown };
     }
     case "add_context_note": {
       const input = NoteInput.safeParse(block.input);
@@ -546,7 +513,7 @@ async function runTool(ctx: Ctx, block: BetaToolUseBlock, actions: ChatAction[],
       if (!note) return fail("Unknown source label. Use a label like S1.");
       actions.push({ id, status: "pending", type: "note", note });
       summaries.push(`(Proposed a context note: ${input.data.note})`);
-      return { type: "tool_result", tool_use_id: block.id, content: shown };
+      return { id: block.id, text: shown };
     }
     case "mark_key_passage": {
       const input = PassageInput.safeParse(block.input);
@@ -571,7 +538,7 @@ async function runTool(ctx: Ctx, block: BetaToolUseBlock, actions: ChatAction[],
         },
       });
       summaries.push(`(Proposed highlighting: "${v.quote}")`);
-      return { type: "tool_result", tool_use_id: block.id, content: shown };
+      return { id: block.id, text: shown };
     }
     case "view_original_pdf": {
       const input = PdfInput.safeParse(block.input);
@@ -581,16 +548,9 @@ async function runTool(ctx: Ctx, block: BetaToolUseBlock, actions: ChatAction[],
       const pdf = await loadOriginalPdf(p.pack.id, p.paper.id);
       if (!pdf) return fail("That paper was uploaded as text; there is no PDF. Use its study copy.");
       return {
-        type: "tool_result",
-        tool_use_id: block.id,
-        content: [
-          {
-            type: "document",
-            source: { type: "base64", media_type: "application/pdf", data: pdf.toString("base64") },
-            title: `[B${ctx.papers.indexOf(p) + 1}] ${p.paper.title} (original PDF)`,
-            citations: { enabled: true },
-          },
-        ],
+        id: block.id,
+        text: "The original PDF is attached.",
+        pdf: { title: `[B${ctx.papers.indexOf(p) + 1}] ${p.paper.title} (original PDF)`, data: pdf },
       };
     }
     default:
