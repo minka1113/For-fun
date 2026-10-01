@@ -1,26 +1,22 @@
 import { useState } from "react";
-import type { Pack, Project, RuleSet } from "../../shared/types";
+import type { Pack, Project } from "../../shared/types";
 
 interface Props {
   project: Project;
   packs: Pack[];
-  ruleSets: RuleSet[];
   isNew: boolean;
   canDelete: boolean;
-  onSave: (patch: Pick<Project, "name" | "question" | "packIds" | "brief" | "defaultRuleSetId">) => void;
+  onSave: (patch: Pick<Project, "name" | "question" | "packIds" | "brief">) => void;
   onDelete: () => void;
   onOpenLibrary: () => void;
   onClose: () => void;
 }
 
-export function ProjectModal({ project, packs, ruleSets, isNew, canDelete, onSave, onDelete, onOpenLibrary, onClose }: Props) {
+export function ProjectModal({ project, packs, isNew, canDelete, onSave, onDelete, onOpenLibrary, onClose }: Props) {
   const [name, setName] = useState(project.name);
   const [question, setQuestion] = useState(project.question);
   const [packIds, setPackIds] = useState<string[]>(project.packIds.filter((id) => packs.some((p) => p.id === id)));
   const [brief, setBrief] = useState(project.brief);
-  const [defaultRuleSetId, setDefaultRuleSetId] = useState(
-    ruleSets.find((r) => r.id === project.defaultRuleSetId)?.id ?? ruleSets[0]?.id,
-  );
 
   const attached = packs.filter((p) => packIds.includes(p.id));
   const defaultBrief = attached.map((p) => p.brief.trim()).filter(Boolean).join("\n");
@@ -41,15 +37,6 @@ export function ProjectModal({ project, packs, ruleSets, isNew, canDelete, onSav
         <label className="field">
           <span>Research question (optional; used as the summary focus when you leave that box empty)</span>
           <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="What should the briefing answer?" />
-        </label>
-
-        <label className="field">
-          <span>Default rule set for new drafts</span>
-          <select value={defaultRuleSetId} onChange={(e) => setDefaultRuleSetId(e.target.value)}>
-            {ruleSets.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
         </label>
 
         <div className="field">
@@ -108,7 +95,7 @@ export function ProjectModal({ project, packs, ruleSets, isNew, canDelete, onSav
           ) : (
             <span />
           )}
-          <button className="primary" disabled={!name.trim()} onClick={() => onSave({ name: name.trim(), question: question.trim(), packIds, brief, defaultRuleSetId })}>
+          <button className="primary" disabled={!name.trim()} onClick={() => onSave({ name: name.trim(), question: question.trim(), packIds, brief })}>
             {isNew ? "Create project" : "Save"}
           </button>
         </div>

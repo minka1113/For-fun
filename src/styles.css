@@ -419,3 +419,4 @@ button.on-accent { background: var(--expert-soft); border-color: var(--expert); 
 .ruleset-notice { background: var(--flag-soft); color: var(--flag); border-radius: 6px; padding: 6px 8px; font-size: 12px; margin-bottom: 6px; }
 .style-head select { max-width: 200px; }
 @media (max-width: 640px) { .ruleset-editor { grid-template-columns: 1fr; } }
+.ruleset-detail .field textarea { min-height: 90px; font-family: var(--sans); }

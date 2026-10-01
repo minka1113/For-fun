@@ -4,22 +4,15 @@ import { AddSourceModal } from "./components/AddSourceModal";
 import { CompareView } from "./components/CompareView";
 import { LibraryView, PackView, PaperView } from "./components/Library";
 import { ProjectModal } from "./components/ProjectModal";
-import { RuleSetsModal } from "./components/RuleSetsModal";
 import { Sidebar, type View } from "./components/Sidebar";
 import { StylesModal } from "./components/StylesModal";
 import { listPacks, summarize } from "./lib/api";
 import { DEMO_PROJECT_ID, demoProject } from "./lib/demo";
 import { download, notebookToMarkdown } from "./lib/export";
-import { copyRuleSet, loadWorkspace, newProject, ruleSetFor, saveWorkspace, uid, type Workspace } from "./lib/storage";
-import { DEFAULT_RULE_SET } from "../shared/rules";
+import { copyStyles, loadWorkspace, newProject, rulesFor, saveWorkspace, styleOf, uid, type Workspace } from "./lib/storage";
+import { DEFAULT_STYLES } from "../shared/styles";
 
 const EDIT_STYLES = "__edit-styles";
-const MANAGE_RULES = "__manage-rules";
-
-/** The project's default rule set if it still exists, else the first one. */
-function defaultRuleSetId(ws: Workspace, project: Project): string {
-  return ws.ruleSets.find((r) => r.id === project.defaultRuleSetId)?.id ?? ws.ruleSets[0].id;
-}
 
 export function App() {
   const [ws, setWs] = useState<Workspace>(loadWorkspace);
@@ -29,16 +22,16 @@ export function App() {
   const [packs, setPacks] = useState<Pack[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(project.sources.map((s) => s.id)));
   const [view, setView] = useState<View>(() => (project.summaries[0] ? { kind: "summary", id: project.summaries[0].id } : { kind: "home" }));
-  const [modal, setModal] = useState<null | "add-source" | "rules" | "styles" | "new-project" | "project-settings">(null);
-  const [rulesModalAt, setRulesModalAt] = useState<string | undefined>(undefined);
-  const openRules = (ruleSetId?: string) => {
-    setRulesModalAt(ruleSetId);
-    setModal("rules");
+  const [modal, setModal] = useState<null | "add-source" | "styles" | "new-project" | "project-settings">(null);
+  const [stylesModalAt, setStylesModalAt] = useState<string | undefined>(undefined);
+  /** Open the styles editor, optionally at a given style ("shared" for the rules every style follows). */
+  const openStyles = (id?: string) => {
+    setStylesModalAt(id);
+    setModal("styles");
   };
 
   const [styleId, setStyleId] = useState(() => ws.styles.find((s) => s.id === "detailed")?.id ?? ws.styles[0].id);
-  const [ruleSetId, setRuleSetId] = useState(() => defaultRuleSetId(ws, project));
-  const composerRuleSet = ws.ruleSets.find((r) => r.id === ruleSetId) ?? ws.ruleSets[0];
+  const composerStyle = ws.styles.find((s) => s.id === styleId) ?? ws.styles[0];
   const [focus, setFocus] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +62,6 @@ export function App() {
     setWs((w) => ({ ...w, activeProjectId: id }));
     setSelected(new Set(next.sources.map((s) => s.id)));
     setView(next.summaries[0] ? { kind: "summary", id: next.summaries[0].id } : { kind: "home" });
-    setRuleSetId(defaultRuleSetId(ws, next));
     setFocus("");
     setError(null);
   };
@@ -83,26 +75,25 @@ export function App() {
 
   const loadDemo = () => {
     const demo = demoProject();
-    // The example is written for the default "Policy briefing" rules; add that set if it's gone.
+    // The example draft is in the built-in Detailed style; add it back if it has been deleted.
+    const detailed = DEFAULT_STYLES.find((s) => s.id === "detailed")!;
     setWs((w) => ({
       ...w,
-      ruleSets: w.ruleSets.some((r) => r.id === DEFAULT_RULE_SET.id) ? w.ruleSets : [...w.ruleSets, copyRuleSet(DEFAULT_RULE_SET)],
+      styles: w.styles.some((s) => s.id === detailed.id) ? w.styles : [...w.styles, ...copyStyles([detailed])],
       projects: [...w.projects.filter((p) => p.id !== DEMO_PROJECT_ID), demo],
       activeProjectId: demo.id,
     }));
-    setRuleSetId(DEFAULT_RULE_SET.id);
     setSelected(new Set(demo.sources.map((s) => s.id)));
     setView({ kind: "summary", id: demo.summaries[0].id });
   };
 
   /* ----- Generating drafts ----- */
 
-  const generate = async (opts: { sourceIds?: string[]; priorities?: string[]; styleName?: string; focus?: string; ruleSetId?: string } = {}) => {
+  const generate = async (opts: { sourceIds?: string[]; priorities?: string[]; styleId?: string; focus?: string } = {}) => {
     const sources = opts.sourceIds ? project.sources.filter((s) => opts.sourceIds!.includes(s.id)) : project.sources.filter((s) => selected.has(s.id));
     if (sources.length === 0) return;
-    const style = ws.styles.find((s) => s.name === opts.styleName) ?? ws.styles.find((s) => s.id === styleId) ?? ws.styles[0];
+    const style = ws.styles.find((s) => s.id === opts.styleId) ?? composerStyle;
     const focusText = (opts.focus ?? focus).trim() || project.question.trim();
-    const rules = ws.ruleSets.find((r) => r.id === opts.ruleSetId) ?? composerRuleSet;
     setBusy(true);
     setError(null);
     try {
@@ -110,7 +101,7 @@ export function App() {
         sources: sources.map(({ id, title, text }) => ({ id, title, text })),
         styleInstructions: style.instructions,
         focus: focusText || undefined,
-        rules: rules.rules,
+        rules: rulesFor(style, ws.sharedRules),
         priorities: opts.priorities,
       });
       const base = focusText || (sources.length === 1 ? sources[0].title : `${sources.length} sources`);
@@ -119,7 +110,7 @@ export function App() {
         title: opts.priorities ? `${base} (expert priorities)` : base,
         sourceIds: sources.map((s) => s.id),
         style: style.name,
-        ruleSetId: rules.id,
+        styleId: style.id,
         focus: focusText || undefined,
         segments: res.segments,
         model: res.model,
@@ -150,8 +141,9 @@ export function App() {
         packs={packs}
         selected={selected}
         view={view}
-        ruleSets={ws.ruleSets}
-        ruleSet={composerRuleSet}
+        styles={ws.styles}
+        composerStyle={composerStyle}
+        sharedRules={ws.sharedRules}
         onSwitchProject={switchProject}
         onNewProject={() => setModal("new-project")}
         onProjectSettings={() => setModal("project-settings")}
@@ -166,7 +158,7 @@ export function App() {
         onToggleAll={(on) => setSelected(new Set(on ? project.sources.map((s) => s.id) : []))}
         onOpen={setView}
         onAddSource={() => setModal("add-source")}
-        onEditRules={() => openRules(composerRuleSet.id)}
+        onEditRules={() => openStyles(composerStyle.id)}
         onExportAll={() => download(`${project.name}.md`, notebookToMarkdown(project.name, project.summaries, project.sources))}
         onLoadDemo={loadDemo}
       />
@@ -179,25 +171,15 @@ export function App() {
             </span>
             <select
               value={styleId}
-              onChange={(e) => (e.target.value === EDIT_STYLES ? setModal("styles") : setStyleId(e.target.value))}
+              onChange={(e) => (e.target.value === EDIT_STYLES ? openStyles(composerStyle.id) : setStyleId(e.target.value))}
               aria-label="Drafting style"
             >
               {ws.styles.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
-              <option value={EDIT_STYLES}>Edit styles…</option>
+              <option value={EDIT_STYLES}>Edit styles and rules…</option>
             </select>
-            <select
-              value={composerRuleSet.id}
-              onChange={(e) => (e.target.value === MANAGE_RULES ? openRules(composerRuleSet.id) : setRuleSetId(e.target.value))}
-              aria-label="Rule set"
-              title="Writing rules the draft will follow"
-            >
-              {ws.ruleSets.map((r) => (
-                <option key={r.id} value={r.id}>Rules: {r.name}</option>
-              ))}
-              <option value={MANAGE_RULES}>Manage rule sets…</option>
-            </select>
+
             <input
               className="focus-input"
               value={focus}
@@ -242,10 +224,11 @@ export function App() {
             <CompareView
               summary={currentSummary}
               sources={project.sources}
-              ruleSets={ws.ruleSets}
+              styles={ws.styles}
+              sharedRules={ws.sharedRules}
               project={project}
               packs={packs}
-              onEditRules={openRules}
+              onEditRules={openStyles}
               onChange={(updated) => updateProject((p) => ({ ...p, summaries: p.summaries.map((s) => (s.id === updated.id ? updated : s)) }))}
               onDelete={() => {
                 updateProject((p) => ({ ...p, summaries: p.summaries.filter((s) => s.id !== currentSummary.id) }));
@@ -255,9 +238,8 @@ export function App() {
                 generate({
                   sourceIds: currentSummary.sourceIds,
                   priorities,
-                  styleName: currentSummary.style,
+                  styleId: styleOf(ws.styles, currentSummary).style.id,
                   focus: currentSummary.focus ?? "",
-                  ruleSetId: ruleSetFor(ws.ruleSets, currentSummary, project).set.id,
                 })
               }
               onOpenPaper={(packId, paperId) => setView({ kind: "paper", packId, paperId })}
@@ -279,24 +261,14 @@ export function App() {
       </main>
 
       {modal === "add-source" && <AddSourceModal onAdd={addSources} onClose={() => setModal(null)} />}
-      {modal === "rules" && (
-        <RuleSetsModal
-          ruleSets={ws.ruleSets}
-          initialId={rulesModalAt}
-          usage={ruleSetUsage(ws)}
-          onSave={(ruleSets) => {
-            setWs((w) => ({ ...w, ruleSets }));
-            if (!ruleSets.some((r) => r.id === ruleSetId)) setRuleSetId(ruleSets.find((r) => r.id === project.defaultRuleSetId)?.id ?? ruleSets[0].id);
-            setModal(null);
-          }}
-          onClose={() => setModal(null)}
-        />
-      )}
       {modal === "styles" && (
         <StylesModal
           styles={ws.styles}
-          onSave={(styles) => {
-            setWs((w) => ({ ...w, styles }));
+          sharedRules={ws.sharedRules}
+          initialId={stylesModalAt}
+          usage={styleUsage(ws)}
+          onSave={(styles, sharedRules) => {
+            setWs((w) => ({ ...w, styles, sharedRules }));
             if (!styles.some((s) => s.id === styleId)) setStyleId(styles[0].id);
             setModal(null);
           }}
@@ -306,9 +278,8 @@ export function App() {
       {(modal === "new-project" || modal === "project-settings") && (
         <ProjectModal
           key={modal}
-          project={modal === "new-project" ? { ...newProject(""), defaultRuleSetId: composerRuleSet.id } : project}
+          project={modal === "new-project" ? newProject("") : project}
           packs={packs}
-          ruleSets={ws.ruleSets}
           isNew={modal === "new-project"}
           canDelete={ws.projects.length > 1}
           onOpenLibrary={() => {
@@ -325,7 +296,6 @@ export function App() {
             } else {
               updateProject((p) => ({ ...p, ...patch }));
             }
-            if (patch.defaultRuleSetId) setRuleSetId(patch.defaultRuleSetId);
             setModal(null);
           }}
           onDelete={() => {
@@ -341,10 +311,10 @@ export function App() {
   );
 }
 
-/** How many drafts, across all projects, use each rule set. */
-function ruleSetUsage(ws: Workspace): Record<string, number> {
+/** How many drafts, across all projects, were written in each style. */
+function styleUsage(ws: Workspace): Record<string, number> {
   const usage: Record<string, number> = {};
-  for (const p of ws.projects) for (const s of p.summaries) if (s.ruleSetId) usage[s.ruleSetId] = (usage[s.ruleSetId] ?? 0) + 1;
+  for (const p of ws.projects) for (const s of p.summaries) if (s.styleId) usage[s.styleId] = (usage[s.styleId] ?? 0) + 1;
   return usage;
 }
 
@@ -401,7 +371,7 @@ function Home({ project, onAdd, onDemo, onSettings }: { project: Project; onAdd:
         <li><strong>Add sources</strong>: paste text, upload files or PDFs, or fetch a URL.</li>
         <li><strong>Summarise</strong> the ones you've ticked, in the drafting style you choose.</li>
         <li><strong>Compare</strong>: hover a sentence to highlight its source passages, then mark it verified or flagged.</li>
-        <li><strong>Check style</strong> against the draft's rule set and apply the fixes.</li>
+        <li><strong>Check style</strong> against the rules for the draft's briefing style and apply the fixes.</li>
         <li><strong>Ask the expert</strong>: attach knowledge packs, then run an expert review or chat about what matters most.</li>
         <li><strong>Compile</strong>: drafts export to Markdown with quoted footnotes and, optionally, the expert's context notes.</li>
       </ol>
