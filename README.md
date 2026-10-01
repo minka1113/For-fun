@@ -7,6 +7,7 @@ Add sources, summarise them with Claude, and read the draft next to the source t
 ## Features
 
 - **Projects**: one per briefing. Each holds its sources, drafts, research question, attached knowledge packs and expert brief. Switch projects from the top of the sidebar.
+- **Research agent** (🔎 Research, at the top of each project): chat with an agent that turns a topic into a research question and sub-questions, searches the open web (preferring government and academic sources), reads the most promising pages, and fills a notebook: candidate **sources** (labelled by type, with cautions and paywall flags), **findings** with verbatim quotes (marked "checked" when the quote was found in a page it read), and **gaps**. **Add as source** imports a page or PDF into the project; **Start briefing** selects the imported sources and moves on to drafting. The notebook is working notes only: drafts are written from the sources you add. Needs the Anthropic provider.
 - **Sources**: paste text, upload text files or **PDFs** (converted with tables transcribed and figures described), or fetch a web page by URL.
 - **Briefing styles with built-in rules**: Executive summary, Brief, Detailed and Bullet points out of the box. Each style has instructions for shaping the draft and its own writing rules (structure, length, format), and every style also follows a shared "Always apply" list (e.g. past tense; facts only from the sources). Choose **Edit styles and rules…** in the style menu to edit, duplicate or add styles.
 - **Side-by-side comparison**
@@ -58,6 +59,7 @@ The local model has no citations feature, PDF input or enforced JSON, so the app
 - **Structured replies** (style check, expert review): the schema goes in the prompt and the reply is validated, with one retry.
 - **PDFs**: text is extracted and marked by page. Tables come out as running text, figures aren't described, and scanned PDFs are rejected. Use the Anthropic provider for PDFs with important tables or figures. The expert's "view original PDF" tool is unavailable.
 - **Limits**: the size limits above are set for Claude's large context window. If your local server has a smaller context, big projects fail with the server's error.
+- **Research agent**: unavailable. It relies on Claude's web search and web fetch tools.
 
 ## Tests
 
@@ -79,13 +81,16 @@ These are for the Anthropic provider (`claude-opus-5` by default; set `ANTHROPIC
 - Converting a PDF to a study copy: roughly 20–40¢ per short paper, once.
 - Expert review, or the first chat question in a session: roughly $1–2 with two full knowledge packs, less with smaller libraries. Follow-up questions within the hour cost roughly 10–20¢, because the library is cached for an hour.
 
+- A research turn: roughly 50¢–$3 depending on how many searches and pages it reads (pages read within a turn are cached, which keeps resends cheap). Web search is billed at $10 per 1,000 searches on top of tokens; each turn is capped at 8 searches and 6 page reads. Web search may need to be enabled for your organisation in the Claude Console.
+
 Every request enables the API's server-side fallback, so if the model declines a request it is retried on a fallback model in the same call.
 
 ## How it works
 
-- `server/llm/`: the model providers behind one interface (`types.ts`): `anthropic.ts` (Claude) and `local.ts` (OpenAI-compatible servers), chosen by `config.ts`. Routes never call a vendor SDK directly.
+- `server/llm/`: the model providers behind one interface (`types.ts`): `anthropic.ts` (Claude) and `local.ts` (OpenAI-compatible servers), chosen by `config.ts`. Routes don't call a vendor SDK directly, except the research agent below.
 - `server/app.ts`: routes for summarising (plain-text `document` blocks with citations; output split into cited **segments**), style checks (structured outputs), PDF extraction for sources, and URL import.
 - `server/expert.ts`: the expert. Papers are labelled `[B1]…` and sources `[S1]…` in document titles, so citations and tool inputs map back reliably. Review uses structured outputs; chat runs a tool loop (`suggest_edit`, `add_context_note`, `mark_key_passage`, `view_original_pdf`) whose actions come back to the browser as suggestion cards. Background papers and sources use one-hour prompt caching.
+- `server/research.ts`: the research agent. It uses Claude's server-side web search and web fetch tools directly (so it needs the Anthropic provider) plus its own notebook tools (`update_plan`, `propose_source`, `record_finding`, `note_gap`), resumes paused turns, and streams progress to the browser as server-sent events. Finding quotes are checked against the text of pages it read.
 - `server/index.ts` starts the server. `server/packs.ts` and `server/study.ts`: knowledge-pack storage and the PDF-to-study-copy conversion queue.
 - `src/components/CompareView.tsx` and `ExpertPane.tsx`: the side-by-side view and the expert panel. Source text is split at every citation and key-passage boundary (`src/lib/spans.ts`) so overlapping highlights render correctly.
 - `shared/`: types, default rules and drafting styles shared by server and browser.
