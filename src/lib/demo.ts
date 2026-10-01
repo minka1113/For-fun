@@ -2,7 +2,7 @@
 // Both sources are fictional.
 
 import type { ExpertState, Project, Segment, Source, SourceRef, StyleCheck, Summary } from "../../shared/types";
-import { DEFAULT_RULES, parseWordLimit } from "../../shared/rules";
+import { DEFAULT_RULES, DEFAULT_RULE_SET, parseWordLimit } from "../../shared/rules";
 
 const REPORT = `Riverton Urban Canopy Assessment — Summary Report
 
@@ -336,6 +336,7 @@ export function demoProject(): Project {
     question: "What did the canopy report find, and how is the council reacting?",
     packIds: [],
     brief: "Anything with policy implications, or new information that was not previously known.",
+    defaultRuleSetId: DEFAULT_RULE_SET.id,
     sources: DEMO_SOURCES,
     summaries: [demoSummary()],
     createdAt: 0,
@@ -349,6 +350,7 @@ export function demoSummary(): Summary {
     title: "Tree canopy loss and the council response",
     sourceIds: DEMO_SOURCES.map((s) => s.id),
     style: "Detailed",
+    ruleSetId: DEFAULT_RULE_SET.id,
     focus: "What did the canopy report find, and how is the council reacting?",
     segments,
     model: "example",

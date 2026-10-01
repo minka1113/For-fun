@@ -1,11 +1,15 @@
 // Style rules are written in plain English. Rules the app can check exactly (word limits)
 // are handled in code; everything else is judged by Claude.
 
+import type { RuleSet } from "./types";
+
 export const DEFAULT_RULES = [
   "Always in past tense",
   "Text only includes facts from the sources, do not inject any assessment or inference",
   "No more than 250 words",
 ];
+
+export const DEFAULT_RULE_SET: RuleSet = { id: "policy-briefing", name: "Policy briefing", rules: DEFAULT_RULES };
 
 export interface WordLimit {
   max: number;
