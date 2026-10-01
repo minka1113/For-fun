@@ -2,7 +2,8 @@
 // Both sources are fictional.
 
 import type { ExpertState, Project, Segment, Source, SourceRef, StyleCheck, Summary } from "../../shared/types";
-import { DEFAULT_RULES, DEFAULT_RULE_SET, parseWordLimit } from "../../shared/rules";
+import { DEFAULT_SHARED_RULES, parseWordLimit } from "../../shared/rules";
+import { DEFAULT_STYLES } from "../../shared/styles";
 
 const REPORT = `Riverton Urban Canopy Assessment — Summary Report
 
@@ -147,7 +148,9 @@ function buildSegments(): Segment[] {
 
 // A style check as Claude might return it for the default rules.
 function demoStyleCheck(segments: Segment[]): StyleCheck {
-  const rules = DEFAULT_RULES.filter((r) => !parseWordLimit(r));
+  // The rules Claude judges for a Detailed draft: the shared ones, then the style's own (word limits are counted by the app).
+  const detailed = DEFAULT_STYLES.find((s) => s.id === "detailed")!;
+  const rules = [...DEFAULT_SHARED_RULES, ...detailed.rules.filter((r) => !parseWordLimit(r))];
   const violations = [
     {
       rule: 0,
@@ -181,6 +184,9 @@ function demoStyleCheck(segments: Segment[]): StyleCheck {
     results: [
       { rule: 0, passed: false, note: "Several sentences use present or present perfect tense." },
       { rule: 1, passed: false, note: "One sentence adds a prediction that isn't in the sources; everything else is sourced." },
+      { rule: 2, passed: true, note: "All four paragraphs have three sentences or fewer." },
+      { rule: 3, passed: true, note: "Figures are attributed to the report or the parks department estimate." },
+      { rule: 4, passed: true, note: "The sources don't contradict each other; the council disagreement is described." },
     ],
     violations: violations.map((v, i) => ({ ...v, id: `demo-v${i}` })),
   };
@@ -336,7 +342,6 @@ export function demoProject(): Project {
     question: "What did the canopy report find, and how is the council reacting?",
     packIds: [],
     brief: "Anything with policy implications, or new information that was not previously known.",
-    defaultRuleSetId: DEFAULT_RULE_SET.id,
     sources: DEMO_SOURCES,
     summaries: [demoSummary()],
     createdAt: 0,
@@ -350,7 +355,7 @@ export function demoSummary(): Summary {
     title: "Tree canopy loss and the council response",
     sourceIds: DEMO_SOURCES.map((s) => s.id),
     style: "Detailed",
-    ruleSetId: DEFAULT_RULE_SET.id,
+    styleId: "detailed",
     focus: "What did the canopy report find, and how is the council reacting?",
     segments,
     model: "example",

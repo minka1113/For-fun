@@ -1,4 +1,4 @@
-import type { Pack, Project, RuleSet } from "../../shared/types";
+import type { DraftStyle, Pack, Project } from "../../shared/types";
 import { parseWordLimit } from "../../shared/rules";
 
 export type View =
@@ -15,9 +15,10 @@ interface Props {
   packs: Pack[];
   selected: Set<string>;
   view: View;
-  ruleSets: RuleSet[];
-  /** The rule set selected for new drafts. */
-  ruleSet: RuleSet;
+  styles: DraftStyle[];
+  /** The style selected for new drafts. */
+  composerStyle: DraftStyle;
+  sharedRules: string[];
   onSwitchProject: (id: string) => void;
   onNewProject: () => void;
   onProjectSettings: () => void;
@@ -117,12 +118,14 @@ export function Sidebar(props: Props) {
 
       <div className="side-section">
         <div className="side-head">
-          <span>Rules: {props.ruleSet.name}</span>
-          <button className="link" onClick={props.onEditRules}>manage</button>
+          <span>Rules: {props.composerStyle.name}</span>
+          <button className="link" onClick={props.onEditRules}>edit</button>
         </div>
-        {props.ruleSet.rules.length === 0 && <p className="muted small">This rule set is empty. Add writing rules to check drafts against.</p>}
+        {props.sharedRules.length + props.composerStyle.rules.length === 0 && (
+          <p className="muted small">No rules for this style. Add writing rules to check drafts against.</p>
+        )}
         <ul className="side-rules">
-          {props.ruleSet.rules.map((r, i) => (
+          {[...props.sharedRules, ...props.composerStyle.rules.filter((r) => !props.sharedRules.includes(r))].map((r, i) => (
             <li key={i} title={parseWordLimit(r) ? "Counted by the app" : "Checked by Claude"}>{r}</li>
           ))}
         </ul>
@@ -145,7 +148,7 @@ export function Sidebar(props: Props) {
                 <button className="side-item" onClick={() => props.onOpen({ kind: "summary", id: s.id })}>
                   <span className="side-title">{s.title}</span>
                   <span className="side-meta">
-                    {[s.style, props.ruleSets.find((r) => r.id === s.ruleSetId)?.name].filter(Boolean).join(" · ")}
+                    {s.style} · {s.sourceIds.length} source{s.sourceIds.length === 1 ? "" : "s"}
                     {verified > 0 && <span className="ok"> · ✓{verified}</span>}
                     {flagged > 0 && <span className="flag"> · ⚑{flagged}</span>}
                   </span>

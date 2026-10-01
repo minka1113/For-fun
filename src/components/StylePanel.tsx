@@ -1,14 +1,16 @@
-import type { RuleSet } from "../../shared/types";
+import type { DraftStyle } from "../../shared/types";
 import type { RuleRow } from "../lib/style";
 
 interface Props {
   rows: RuleRow[];
-  ruleSets: RuleSet[];
-  /** The set this draft is checked against. */
-  ruleSetId: string;
-  /** True when the draft's own set was deleted and it fell back to the project default. */
-  fellBack: boolean;
-  onChangeRuleSet: (id: string) => void;
+  styles: DraftStyle[];
+  /** The style whose rules this draft is checked against. */
+  checkStyleId: string;
+  /** The style the draft was written in. */
+  ownStyleId: string;
+  /** True when the draft's own style was deleted. */
+  ownStyleMissing: boolean;
+  onChangeCheckStyle: (id: string) => void;
   checking: boolean;
   error: string | null;
   checkedAt?: number;
@@ -29,19 +31,22 @@ export function StylePanel(props: Props) {
 
   return (
     <div className="style-panel">
-      {props.fellBack && (
-        <p className="ruleset-notice">This draft's rule set was deleted, so it's using the project's default set instead.</p>
+      {props.ownStyleMissing && (
+        <p className="ruleset-notice">The style this draft was written in has been deleted. Pick a style below to check against.</p>
       )}
       <div className="style-head">
         <label className="toggle">
-          Rules:
-          <select value={props.ruleSetId} onChange={(e) => props.onChangeRuleSet(e.target.value)} aria-label="Rule set for this draft">
-            {props.ruleSets.map((r) => (
-              <option key={r.id} value={r.id}>{r.name}</option>
+          Check against:
+          <select value={props.checkStyleId} onChange={(e) => props.onChangeCheckStyle(e.target.value)} aria-label="Style rules to check against">
+            {props.styles.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.id === props.ownStyleId ? " (this draft's style)" : ""}
+              </option>
             ))}
           </select>
         </label>
-        <button className="link" onClick={props.onEditRules}>Manage rule sets</button>
+        <button className="link" onClick={props.onEditRules}>Edit rules</button>
       </div>
       <div className="style-head">
         <div className="muted small">
@@ -57,7 +62,7 @@ export function StylePanel(props: Props) {
         </div>
       </div>
       {props.error && <p className="error small">{props.error}</p>}
-      {rows.length === 0 && <p className="muted small">This rule set has no rules yet. Add some with “Manage rule sets”.</p>}
+      {rows.length === 0 && <p className="muted small">This style has no rules yet. Add some with “Edit rules”.</p>}
 
       <ul className="rule-list">
         {rows.map((row, i) => (

@@ -8,7 +8,7 @@ Add sources, summarise them with Claude, and read the draft next to the source t
 
 - **Projects**: one per briefing. Each holds its sources, drafts, research question, attached knowledge packs and expert brief. Switch projects from the top of the sidebar.
 - **Sources**: paste text, upload text files or **PDFs** (converted with tables transcribed and figures described), or fetch a web page by URL.
-- **Drafting styles**: Executive summary, Brief, Detailed and Bullet points out of the box. Choose **Edit styles…** in the style menu to change their instructions or add your own.
+- **Briefing styles with built-in rules**: Executive summary, Brief, Detailed and Bullet points out of the box. Each style has instructions for shaping the draft and its own writing rules (structure, length, format), and every style also follows a shared "Always apply" list (e.g. past tense; facts only from the sources). Choose **Edit styles and rules…** in the style menu to edit, duplicate or add styles.
 - **Side-by-side comparison**
   - Hover a draft sentence to highlight the source passages behind it; the source pane scrolls to them.
   - Hover a highlighted source passage to see which sentences cite it; click it to jump there.
@@ -16,7 +16,7 @@ Add sources, summarise them with Claude, and read the draft next to the source t
   - Uncited statements get a wavy underline so you know to check them.
   - Per-source **coverage bars** show how much of each source the draft drew on.
 - **Review workflow**: pin a claim to see its quotes, then mark it ✓ supported or ⚑ flagged. Keyboard: `j`/`k` next/previous claim, `v` verify, `f` flag, `Esc` unpin.
-- **Rule sets**: named sets of plain-English writing rules (e.g. "Policy briefing": past tense, facts only, max 250 words; "Newsletter": plain language, max 150 words). Pick a set from the **Rules** menu next to Summarise (each project has a default), and the draft follows it. **Check style** reviews a draft rule by rule with suggested fixes, and the Style tab can re-check a draft against a different set. Create, duplicate and edit sets with **Manage rule sets…**. Word limits are counted by the app; Claude judges the rest.
+- **Style check**: **Check style** reviews a draft rule by rule against its style's rules plus the shared ones, with suggested fixes. The Style tab can also check a draft against another style's rules. Word limits for the whole draft are counted by the app; Claude judges the rest.
 - **Editing**: edit any sentence from the Claim tab. Edits and applied fixes keep the sentence's links to the source and send it back to unreviewed.
 - **Subject-matter expert** (✦ Expert button on a draft)
   - Draws on the project's **knowledge packs** (your background papers) and on its own trained knowledge, and always labels which: *Library*, *General knowledge* or both. Library citations open the passage in the paper.

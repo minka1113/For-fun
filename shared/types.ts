@@ -29,29 +29,26 @@ export interface Segment {
 /** A reviewer's verdict on one summary segment after checking it against the source. */
 export type Verdict = "ok" | "flag";
 
-/** A named, editable set of writing rules, chosen per draft (e.g. "Policy briefing", "Newsletter"). */
-export interface RuleSet {
-  id: string;
-  name: string;
-  /** Plain-English rules, one per entry. */
-  rules: string[];
-}
-
-/** A drafting option offered when generating a summary; editable by the researcher. */
+/** A drafting option offered when generating a summary, with its own writing rules; editable by the researcher. */
 export interface DraftStyle {
   id: string;
   name: string;
+  /** How to shape the draft: structure, audience, emphasis. */
   instructions: string;
+  /** Plain-English rules this style's drafts must follow, on top of the shared rules. */
+  rules: string[];
 }
 
 export interface Summary {
   id: string;
   title: string;
   sourceIds: string[];
-  /** Name of the drafting style used. */
+  /** Name of the drafting style used (kept for display if the style is later deleted). */
   style: string;
-  /** The rule set this draft follows and is checked against. */
-  ruleSetId?: string;
+  /** Id of the drafting style used; its rules are what the draft follows. */
+  styleId?: string;
+  /** Style whose rules the Style tab checks against, when switched away from the draft's own. */
+  checkStyleId?: string;
   focus?: string;
   segments: Segment[];
   model: string;
@@ -140,8 +137,6 @@ export interface Project {
   packIds: string[];
   /** Overrides the packs' default expert briefs when non-empty. */
   brief: string;
-  /** Rule set pre-selected for new drafts in this project. */
-  defaultRuleSetId?: string;
   sources: Source[];
   summaries: Summary[];
   createdAt: number;
