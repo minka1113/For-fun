@@ -32,7 +32,11 @@ import { findQuote } from "./spans.js";
 export interface ResearchClient {
   beta: {
     messages: {
-      stream(params: any): { on(event: "contentBlock", listener: (block: any) => void): unknown; finalMessage(): Promise<any> };
+      stream(params: any, options?: { timeout?: number; maxRetries?: number }): {
+        on(event: "contentBlock" | "text" | "streamEvent", listener: (...args: any[]) => void): unknown;
+        finalMessage(): Promise<any>;
+        abort?(): void;
+      };
     };
   };
 }
@@ -52,6 +56,14 @@ function getClient(): ResearchClient {
 const FALLBACK = { betas: ["server-side-fallback-2026-07-01"] as string[], fallbacks: "default" as const };
 /** Rounds of the agent loop per turn (tool results and paused server-tool turns each start a new round). */
 const MAX_ROUNDS = 8;
+/** No new round starts after this long, so one turn can't run on indefinitely. */
+let turnBudgetMs = 8 * 60 * 1000;
+/** Tests shorten the turn budget. */
+export function setTurnBudgetMs(ms: number | null): void {
+  turnBudgetMs = ms ?? 8 * 60 * 1000;
+}
+/** A single model call (searching and reading included) that takes longer than this is abandoned. */
+const REQUEST_TIMEOUT_MS = 6 * 60 * 1000;
 const MAX_NOTEBOOK_ITEMS = 60;
 
 const SYSTEM_PROMPT = `You are a research assistant helping a researcher with the up-front research for a briefing. You search the open web and read pages to find strong sources and key facts, and you keep a shared research notebook up to date.
@@ -325,7 +337,14 @@ function buildMessages(body: ResearchChatRequest): BetaMessageParam[] {
   return messages;
 }
 
-async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => void, isClosed: () => boolean): Promise<ResearchChatResult> {
+interface TurnControl {
+  isClosed: () => boolean;
+  /** Called with a function that aborts the model call in flight, so a closed connection stops it. */
+  setAbort: (abort: (() => void) | null) => void;
+}
+
+async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => void, control: TurnControl): Promise<ResearchChatResult> {
+  const started = Date.now();
   const ctx: TurnContext = {
     state: body.state,
     updates: { candidates: [], findings: [], gaps: [] },
@@ -336,7 +355,12 @@ async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => vo
   const parts: ResearchPart[] = [];
   const activity: string[] = [];
 
-  for (let round = 0; round < MAX_ROUNDS && !isClosed(); round++) {
+  let stoppedEarly = false;
+  for (let round = 0; round < MAX_ROUNDS && !control.isClosed(); round++) {
+    if (round > 0 && Date.now() - started >= turnBudgetMs) {
+      stoppedEarly = true;
+      break;
+    }
     emit({ type: "status", text: round === 0 ? "Thinking…" : "Continuing…" });
     const stream = getClient().beta.messages.stream({
       model: getProvider().model,
@@ -348,14 +372,38 @@ async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => vo
       cache_control: { type: "ephemeral" },
       ...FALLBACK,
       messages,
+    }, { timeout: REQUEST_TIMEOUT_MS, maxRetries: 1 });
+    control.setAbort(() => stream.abort?.());
+
+    // Progress listeners must never throw: an error here would break the stream mid-turn.
+    let lastStatus = "";
+    const status = (text: string) => {
+      if (text === lastStatus) return;
+      lastStatus = text;
+      emit({ type: "status", text });
+    };
+    stream.on("streamEvent", (event: { type: string; content_block?: { type: string } }) => {
+      try {
+        if (event.type === "content_block_start" && event.content_block?.type === "thinking") status("Thinking…");
+      } catch (err) {
+        console.error("research progress:", err);
+      }
+    });
+    stream.on("text", (delta: string) => {
+      if (delta) emit({ type: "text", text: delta });
     });
     stream.on("contentBlock", (block: BetaContentBlock) => {
-      const line = describe(block);
-      if (!line) return;
-      activity.push(line);
-      emit({ type: "status", text: line });
+      try {
+        const line = describe(block);
+        if (!line) return;
+        activity.push(line);
+        status(line);
+      } catch (err) {
+        console.error("research progress:", err);
+      }
     });
     const message: BetaMessage = await stream.finalMessage();
+    control.setAbort(null);
     if (message.stop_reason === "refusal") throw new RefusalError();
 
     // Pages read come before any tool calls that rely on them in the same response.
@@ -367,10 +415,15 @@ async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => vo
     if (message.stop_reason === "tool_use") {
       const calls = message.content.filter((b): b is BetaToolUseBlock => b.type === "tool_use");
       messages.push({ role: "user", content: calls.map((c) => runTool(ctx, c)) });
+      // Send what has been gathered so far, so a stopped or dropped turn keeps it.
+      emit({ type: "progress", updates: ctx.updates });
       continue;
     }
     if (message.stop_reason === "max_tokens") parts.push({ text: "\n\n(The reply was cut off because it ran too long.)", refs: [] });
     break;
+  }
+  if (stoppedEarly) {
+    parts.push({ text: "\n\n(I paused here so this turn doesn't run too long. Everything found so far is in the notebook; ask me to continue.)", refs: [] });
   }
 
   const u = ctx.updates;
@@ -417,15 +470,19 @@ researchRouter.post("/chat", async (req, res) => {
   // Keep proxies and load balancers from closing a connection that is quiet during a long model call.
   const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 15_000);
   let closed = false;
+  let abortCurrent: (() => void) | null = null;
   res.on("close", () => {
     closed = true;
     clearInterval(heartbeat);
+    // The researcher stopped or lost the connection: stop the model call too, rather than paying for it.
+    abortCurrent?.();
   });
 
   try {
-    const result = await runTurn(body, emit, () => closed);
+    const result = await runTurn(body, emit, { isClosed: () => closed, setAbort: (a) => (abortCurrent = a) });
     emit({ type: "done", result });
   } catch (err) {
+    if (closed) return; // stopped by the researcher; nobody is listening
     console.error(err);
     const known = err instanceof RefusalError ? { error: err.message } : provider.describeError(err);
     emit({ type: "error", error: known?.error ?? "Unexpected server error while researching." });

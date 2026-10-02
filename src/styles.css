@@ -457,3 +457,6 @@ button.icon:hover { color: var(--flag); }
 .kind-news { background: var(--cite); }
 .finding blockquote { margin: 6px 0; border-left: 3px solid var(--line); padding-left: 8px; font-family: var(--serif); font-size: 14px; }
 @media (max-width: 860px) { .research-body { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+.stop-btn { margin-left: auto; font-size: 12px; padding: 2px 10px; }
+.stop-btn:hover { border-color: var(--flag); color: var(--flag); }
+.bubble.live .assistant-text { margin: 6px 0; white-space: pre-wrap; }
