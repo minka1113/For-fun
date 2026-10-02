@@ -15,7 +15,7 @@ export function newId(): string {
 }
 
 function empty(): Data {
-  return { tasks: [], log: [], settings: { homeName: "Our home", timeZone: "", calendarToken: newToken() } };
+  return { tasks: [], log: [], settings: { homeName: "The Coop", timeZone: "", calendarToken: newToken() } };
 }
 
 export class Store {
