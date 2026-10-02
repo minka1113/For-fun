@@ -47,13 +47,13 @@ data "aws_iam_policy_document" "deploy" {
       "ecr:PutImage",
       "ecr:UploadLayerPart",
     ]
-    resources = [aws_ecr_repository.app.arn, aws_ecr_repository.home.arn]
+    resources = [aws_ecr_repository.app.arn]
   }
 
   statement {
     sid       = "RunDeployDocument"
     actions   = ["ssm:SendCommand"]
-    resources = [aws_ssm_document.deploy.arn, aws_ssm_document.home_deploy.arn]
+    resources = [aws_ssm_document.deploy.arn]
   }
 
   statement {

@@ -40,5 +40,4 @@ The app itself has no auth; the ALB refuses every request that has no valid Cogn
 | `secrets.tf` | Empty Secrets Manager secret for the Anthropic key |
 | `backup.tf` | Daily snapshots of the data volume (7 kept) |
 | `github_oidc.tf` | Keyless deploy role for GitHub Actions |
-| `home.tf`, `templates/home-deploy.sh.tftpl` | Home maintenance app (`../home-maintenance`) on `home.roostercoop.tech`: cert, listener rules (Cognito login except the `/cal/*` calendar feed), target group on :8788, ECR repo, SSM deploy document |
 | `terraform.tfvars` | **Git-ignored**: user emails. Template: `terraform.tfvars.example` |
