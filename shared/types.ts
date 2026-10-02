@@ -428,5 +428,9 @@ export interface ResearchChatResult {
 /** Server-sent events from POST /api/research/chat. */
 export type ResearchEvent =
   | { type: "status"; text: string }
+  /** A piece of the reply as it is written. */
+  | { type: "text"; text: string }
+  /** Everything gathered so far this turn, sent after each round of tool calls. */
+  | { type: "progress"; updates: ResearchUpdates }
   | { type: "done"; result: ResearchChatResult }
   | { type: "error"; error: string };

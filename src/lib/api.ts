@@ -11,6 +11,7 @@ import type {
   ResearchChatRequest,
   ResearchChatResult,
   ResearchEvent,
+  ResearchUpdates,
   StyleCheckRequest,
   StyleCheckResponse,
   SummarizeRequest,
@@ -64,37 +65,71 @@ export async function uploadPaper(packId: string, file: File): Promise<Paper> {
   return data as Paper;
 }
 
+export interface ResearchHandlers {
+  onStatus: (text: string) => void;
+  /** A piece of the reply as it is written. */
+  onText: (text: string) => void;
+  /** Everything gathered so far this turn (sent after each round of tool calls). */
+  onProgress: (updates: ResearchUpdates) => void;
+}
+
+/** The server sends a keep-alive every 15 seconds, so this much silence means the connection is gone. */
+const RESEARCH_STALL_MS = 60_000;
+
 /**
- * Run one research-chat turn. Progress lines arrive through onStatus while the agent searches and
- * reads; the promise resolves with the reply and notebook updates when the turn finishes.
+ * Run one research-chat turn, reporting progress as the agent searches and reads. Resolves with
+ * the reply and notebook updates when the turn finishes. Rejects if the turn fails, is stopped with
+ * `signal`, or the connection goes silent.
  */
-export async function researchChat(req: ResearchChatRequest, onStatus: (text: string) => void): Promise<ResearchChatResult> {
+export async function researchChat(req: ResearchChatRequest, handlers: ResearchHandlers, signal?: AbortSignal): Promise<ResearchChatResult> {
   const res = await fetch("/api/research/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(req),
+    signal,
   });
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));
     throw new Error((data as { error?: string }).error ?? `Request failed (${res.status})`);
   }
+  if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+    throw new Error("The server sent an unexpected reply. If you're signed in through a login page, reload the page and try again.");
+  }
+
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let cut: number;
-    while ((cut = buffer.indexOf("\n\n")) !== -1) {
-      const chunk = buffer.slice(0, cut);
-      buffer = buffer.slice(cut + 2);
-      if (!chunk.startsWith("data: ")) continue; // keep-alive comments
-      const event = JSON.parse(chunk.slice(6)) as ResearchEvent;
-      if (event.type === "status") onStatus(event.text);
-      else if (event.type === "done") return event.result;
-      else throw new Error(event.error);
+  let lastByte = Date.now();
+  let stalled = false;
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastByte > RESEARCH_STALL_MS) {
+      stalled = true;
+      reader.cancel().catch(() => {});
     }
+  }, 5_000);
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastByte = Date.now();
+      buffer += decoder.decode(value, { stream: true });
+      let cut: number;
+      while ((cut = buffer.indexOf("\n\n")) !== -1) {
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        if (!chunk.startsWith("data: ")) continue; // keep-alive comments
+        const event = JSON.parse(chunk.slice(6)) as ResearchEvent;
+        if (event.type === "status") handlers.onStatus(event.text);
+        else if (event.type === "text") handlers.onText(event.text);
+        else if (event.type === "progress") handlers.onProgress(event.updates);
+        else if (event.type === "done") return event.result;
+        else if (event.type === "error") throw new Error(event.error);
+      }
+    }
+  } finally {
+    clearInterval(watchdog);
   }
-  throw new Error("The research connection closed before the turn finished. Try again.");
+  if (stalled) throw new Error("Lost contact with the server during this turn (no response for a minute).");
+  throw new Error("The connection closed before the turn finished.");
 }

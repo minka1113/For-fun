@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Candidate, Project, ResearchMessage, ResearchState, Source, SourceKind } from "../../shared/types";
-import { fetchUrl, researchChat } from "../lib/api";
-import { applyResearchTurn, emptyResearch, notebookForRequest } from "../lib/research";
+import { fetchUrl } from "../lib/api";
+import { emptyResearch, notebookForRequest } from "../lib/research";
+import { clearRunError, getRun, startRun, stopRun, subscribeRuns } from "../lib/researchRuns";
 import { uid } from "../lib/storage";
 
 interface Props {
@@ -34,13 +35,19 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
   const research = project.research ?? emptyResearch();
   const [tab, setTab] = useState<Tab>("plan");
   const [input, setInput] = useState("");
-  const [running, setRunning] = useState(false);
-  const [statusLines, setStatusLines] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const run = useSyncExternalStore(subscribeRuns, () => getRun(project.id));
+  const { running, statusLines, liveText, startedAt, error } = run;
+  const [now, setNow] = useState(Date.now());
   const logEnd = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => logEnd.current?.scrollIntoView({ block: "end" }), [research.chat.length, statusLines.length]);
+  useEffect(() => logEnd.current?.scrollIntoView({ block: "end" }), [research.chat.length, statusLines.length, liveText.length > 0]);
+  // Tick the elapsed-time display while a turn runs.
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
 
   const send = async (text: string) => {
     if (!text.trim() || running) return;
@@ -49,21 +56,11 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
     const state = notebookForRequest(research);
     onUpdate((r) => ({ ...r, chat: [...r.chat, userMsg] }));
     setInput("");
-    setRunning(true);
-    setStatusLines([]);
-    setError(null);
-    try {
-      const result = await researchChat({ state, history, message: userMsg.text }, (line) => setStatusLines((s) => [...s, line]));
-      onUpdate((r) => applyResearchTurn(r, result));
-      const u = result.updates;
-      if (u.candidates.length && !u.plan) setTab("sources");
-      else if (u.plan) setTab("plan");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setRunning(false);
-      setStatusLines([]);
-    }
+    setNow(Date.now());
+    // The turn runs outside this view, so it carries on (and still saves) if you look elsewhere meanwhile.
+    const updates = await startRun(project.id, { state, history, message: userMsg.text }, onUpdate);
+    if (updates?.plan) setTab("plan");
+    else if (updates?.candidates.length) setTab("sources");
   };
 
   const added = research.candidates.filter((c) => c.status === "added" && project.sources.some((s) => s.id === c.sourceId));
@@ -144,15 +141,24 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
             ))}
             {running && (
               <div className="bubble assistant live">
-                <div className="live-head"><span className="spinner" /> Researching… this can take a few minutes</div>
+                <div className="live-head">
+                  <span className="spinner" /> Researching… {formatElapsed(now - startedAt)}
+                  <button className="stop-btn" onClick={() => stopRun(project.id)}>Stop</button>
+                </div>
+                {liveText && <div className="assistant-text">{liveText}</div>}
                 <ul className="live-lines">
                   {statusLines.slice(-6).map((l, i) => <li key={i}>{l}</li>)}
                 </ul>
+                <div className="muted small">A turn can take a few minutes while the agent searches and reads. Stopping keeps what it has found so far.</div>
               </div>
             )}
             <div ref={logEnd} />
           </div>
-          {error && <p className="error small pad">{error}</p>}
+          {error && (
+            <p className="error small pad">
+              {error} <button className="link" onClick={() => clearRunError(project.id)}>dismiss</button>
+            </p>
+          )}
           <div className="chat-input">
             <textarea
               ref={inputRef}
@@ -189,6 +195,11 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
       </div>
     </div>
   );
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function activitySummary(lines: string[]): string {

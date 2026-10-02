@@ -8,7 +8,7 @@ import { app } from "../server/app.js";
 import { setProvider } from "../server/llm/index.js";
 import { AnthropicProvider, type AnthropicLike } from "../server/llm/anthropic.js";
 import { LocalProvider } from "../server/llm/local.js";
-import { type ResearchClient, setResearchClient } from "../server/research.js";
+import { type ResearchClient, setResearchClient, setTurnBudgetMs } from "../server/research.js";
 import { makePdf } from "./helpers/pdf.js";
 import type { ResearchChatRequest, ResearchEvent } from "../shared/types.js";
 
@@ -24,6 +24,7 @@ after(() => server.close());
 afterEach(() => {
   setProvider(null);
   setResearchClient(null);
+  setTurnBudgetMs(null);
 });
 
 /** A fake client that returns one scripted message per request and records what was sent. */
@@ -35,14 +36,20 @@ function scripted(messages: object[]) {
         stream(params) {
           calls.push(structuredClone(params));
           const message = { model: "claude-test", ...messages[calls.length - 1] } as any;
-          const listeners: ((b: any) => void)[] = [];
+          const listeners: Record<string, ((...args: any[]) => void)[]> = {};
+          const fire = (event: string, ...args: any[]) => (listeners[event] ?? []).forEach((l) => l(...args));
           return {
-            on(_event: "contentBlock", listener: (b: any) => void) {
-              listeners.push(listener);
+            on(event: string, listener: (...args: any[]) => void) {
+              (listeners[event] ??= []).push(listener);
               return this;
             },
             async finalMessage() {
-              for (const block of message.content) listeners.forEach((l) => l(block));
+              // Replay the message the way the SDK reports a stream: block starts, text deltas, finished blocks.
+              for (const block of message.content) {
+                fire("streamEvent", { type: "content_block_start", content_block: block });
+                if (block.type === "text") fire("text", block.text);
+                fire("contentBlock", block);
+              }
               return message;
             },
           };
@@ -133,6 +140,11 @@ test("a research turn streams progress, runs tools and returns notebook updates"
   assert.ok(statuses.includes("Found: Heat Islands"));
   assert.ok(statuses.includes("Continuing…"));
 
+  const streamed = events.filter((e) => e.type === "text").map((e) => (e as { text: string }).text).join("");
+  assert.equal(streamed, "Let me look into urban heat.Trees can lower peak temperatures noticeably.", "reply text streams as it is written");
+  const progress = events.find((e) => e.type === "progress") as Extract<ResearchEvent, { type: "progress" }> | undefined;
+  assert.equal(progress?.updates.candidates.length, 1, "notebook progress is sent after the tool round");
+
   const done = events.at(-1);
   assert.equal(done?.type, "done");
   const { result } = done as Extract<ResearchEvent, { type: "done" }>;
@@ -217,4 +229,68 @@ test("POST /api/fetch-url imports a PDF report through the study-copy conversion
   } finally {
     site.close();
   }
+});
+
+test("a malformed result block doesn't break the turn", async () => {
+  scripted([
+    {
+      stop_reason: "end_turn",
+      content: [
+        { type: "web_fetch_tool_result", tool_use_id: "x", content: { type: "web_fetch_tool_result_error" } },
+        { type: "web_search_tool_result", tool_use_id: "y", content: {} },
+        { type: "text", text: "Done anyway.", citations: null },
+      ],
+    },
+  ]);
+  const events = await research({ state: EMPTY_STATE, history: [], message: "Hi" });
+  assert.equal(events.at(-1)?.type, "done");
+});
+
+test("a turn past its time budget stops starting new rounds and says so", async () => {
+  setTurnBudgetMs(0);
+  const calls = scripted([
+    { stop_reason: "tool_use", content: [{ type: "tool_use", id: "g", name: "note_gap", input: { gap: "Costs", sub_question: 0 } }] },
+    { stop_reason: "end_turn", content: [{ type: "text", text: "never reached", citations: null }] },
+  ]);
+  const events = await research({ state: EMPTY_STATE, history: [], message: "Hi" });
+  assert.equal(calls.length, 1);
+  const { result } = events.at(-1) as Extract<ResearchEvent, { type: "done" }>;
+  assert.equal(result.updates.gaps.length, 1, "what was gathered before the pause is kept");
+  assert.match(result.text, /paused here/);
+});
+
+test("stopping in the browser aborts the model call in flight", async () => {
+  let aborted = false;
+  setProvider(new AnthropicProvider("claude-test", {} as AnthropicLike));
+  setResearchClient({
+    beta: {
+      messages: {
+        stream() {
+          let reject: (e: Error) => void = () => {};
+          return {
+            on() {
+              return this;
+            },
+            finalMessage: () => new Promise((_, r) => (reject = r)),
+            abort() {
+              aborted = true;
+              reject(new Error("aborted"));
+            },
+          };
+        },
+      },
+    },
+  });
+  const controller = new AbortController();
+  const res = await fetch(`${base}/api/research/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ state: EMPTY_STATE, history: [], message: "Hi" }),
+    signal: controller.signal,
+  });
+  const reader = res.body!.getReader();
+  await reader.read(); // the first status event: the model call has started
+  controller.abort();
+  for (let i = 0; i < 50 && !aborted; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(aborted, true);
 });
