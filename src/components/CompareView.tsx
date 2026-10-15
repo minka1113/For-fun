@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BackgroundRef, Citation, DraftStyle, KeyPoint, Pack, Project, Segment, Source, SourceRef, Summary, Verdict } from "../../shared/types";
+import type { BackgroundRef, Citation, DraftStyle, KeyPoint, Pack, Project, Source, SourceRef, Summary, Verdict } from "../../shared/types";
 import { countWords, parseWordLimit, withinLimit } from "../../shared/rules";
 import { checkStyle } from "../lib/api";
-import { coverage, fragmentSource, isUnsupported, type KeyRange } from "../lib/spans";
+import { coverage, isUnsupported } from "../lib/spans";
 import { download, summaryToMarkdown } from "../lib/export";
 import { rulesFor, styleOf, uid } from "../lib/storage";
 import {
@@ -15,11 +15,13 @@ import {
   withSegments,
   type DraftAnnotation,
   type MarkKind,
-  type SegmentMark,
 } from "../lib/style";
 import { StylePanel } from "./StylePanel";
 import { ExpertPane } from "./ExpertPane";
 import { PaperPeek } from "./Library";
+import { SegmentView } from "./DraftText";
+import { SourceText } from "./SourceText";
+import { Inspector } from "./Inspector";
 
 interface Props {
   summary: Summary;
@@ -36,8 +38,6 @@ interface Props {
   onRegenerate: (priorities: string[]) => void;
   onOpenPaper: (packId: string, paperId: string) => void;
 }
-
-const TAG_SHORT: Record<string, string> = { policy: "Policy", new: "New", contradicts: "Contradicts", confirms: "Confirms" };
 
 type DrawerTab = "claim" | "style" | "notes";
 
@@ -554,247 +554,6 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: str
     <div className={`stat ${tone ?? ""}`}>
       <span className="stat-value">{value}</span>
       <span className="stat-label">{label}</span>
-    </div>
-  );
-}
-
-interface SegmentViewProps {
-  seg: Segment;
-  active: boolean;
-  pinned: boolean;
-  linked: boolean;
-  verdict?: Verdict;
-  unsupported: boolean;
-  citeNumbers: Map<Citation, number>;
-  marks?: SegmentMark[];
-  activeMark: string | null;
-  onMark: (id: string, kind: MarkKind) => void;
-  onHover: () => void;
-  onClick: () => void;
-  onCite: (c: Citation) => void;
-}
-
-function SegmentView(props: SegmentViewProps) {
-  const { seg, active, pinned, linked, verdict, unsupported, citeNumbers, onHover, onClick, onCite } = props;
-  const interactive = seg.citations.length > 0 || unsupported;
-  const body = <MarkedText text={seg.text} marks={props.marks} active={props.activeMark} onPick={props.onMark} />;
-  if (!interactive) return <span>{body}</span>;
-  const cls = [
-    "seg",
-    seg.citations.length ? "cited" : "",
-    unsupported ? "unsupported" : "",
-    active ? "active" : "",
-    pinned ? "pinned" : "",
-    linked ? "linked" : "",
-    verdict ? `verdict-${verdict}` : "",
-  ].join(" ");
-  return (
-    <>
-      <span className={cls} data-seg={seg.id} onMouseEnter={onHover} onClick={onClick}>
-        {body}
-        {verdict === "ok" && <span className="verdict-mark ok" aria-label="verified">✓</span>}
-        {verdict === "flag" && <span className="verdict-mark flag" aria-label="flagged">⚑</span>}
-      </span>
-      {seg.citations.map((c) => (
-        <button
-          key={`${c.sourceId}:${c.start}:${c.end}`}
-          className="cite-chip"
-          title={c.quote}
-          onMouseEnter={onHover}
-          onClick={(e) => {
-            e.stopPropagation();
-            onCite(c);
-          }}
-        >
-          {citeNumbers.get(c)}
-        </button>
-      ))}
-    </>
-  );
-}
-
-const MARK_TITLE: Record<MarkKind, string> = {
-  style: "Breaks a style rule; click for details",
-  edit: "The expert suggests an edit here; click for details",
-  "low-value": "The expert rates this as lower-value; click for details",
-};
-
-/** Segment text with style-violation and expert highlights. */
-function MarkedText({
-  text,
-  marks,
-  active,
-  onPick,
-}: {
-  text: string;
-  marks?: SegmentMark[];
-  active: string | null;
-  onPick: (id: string, kind: MarkKind) => void;
-}) {
-  if (!marks?.length) return <>{text}</>;
-  const sorted = [...marks].sort((a, b) => a.start - b.start);
-  const parts: React.ReactNode[] = [];
-  let pos = 0;
-  for (const m of sorted) {
-    if (m.start < pos) continue; // overlapping violation; the first one wins
-    if (m.start > pos) parts.push(text.slice(pos, m.start));
-    parts.push(
-      <span
-        key={m.id}
-        data-mark={m.id}
-        className={`${m.kind}-mark ${active === m.id ? "active" : ""}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onPick(m.id, m.kind);
-        }}
-        title={MARK_TITLE[m.kind]}
-      >
-        {text.slice(m.start, m.end)}
-      </span>,
-    );
-    pos = m.end;
-  }
-  parts.push(text.slice(pos));
-  return <>{parts}</>;
-}
-
-interface SourceTextProps {
-  source: Source;
-  segments: Segment[];
-  activeId: string | null;
-  flagged: Record<string, Verdict>;
-  keyPoints: KeyPoint[];
-  selectedPoint: string | null;
-  onPickPoint: (id: string) => void;
-  onHover: (segIds: string[]) => void;
-  onPick: (segId: string) => void;
-}
-
-function SourceText({ source, segments, activeId, flagged, keyPoints, selectedPoint, onPickPoint, onHover, onPick }: SourceTextProps) {
-  const mine = useMemo(() => keyPoints.filter((k) => k.source.sourceId === source.id && k.source.start >= 0), [keyPoints, source.id]);
-  const keyRanges = useMemo<KeyRange[]>(() => mine.map((k) => ({ id: k.id, start: k.source.start, end: k.source.end })), [mine]);
-  const fragments = useMemo(() => fragmentSource(source.text, source.id, segments, keyRanges), [source, segments, keyRanges]);
-  const startsAt = useMemo(() => new Map(mine.map((k) => [k.source.start, k])), [mine]);
-  return (
-    <div className="source-text" onMouseLeave={() => onHover([])}>
-      {source.origin && <div className="origin">{source.origin}</div>}
-      {fragments.map((f) => {
-        const text = source.text.slice(f.start, f.end);
-        const point = startsAt.get(f.start);
-        const tag = point && (
-          <button key={`tag-${point.id}`} className={`key-tag ${point.id === selectedPoint ? "selected" : ""}`} onClick={() => onPickPoint(point.id)} title={point.point}>
-            ✦ {point.tags.map((t) => TAG_SHORT[t]).join(" · ") || "Key"}
-          </button>
-        );
-        if (f.segIds.length === 0 && f.pointIds.length === 0) return <span key={f.start}>{text}</span>;
-        const isActive = activeId !== null && f.segIds.includes(activeId);
-        const isFlagged = f.segIds.some((id) => flagged[id] === "flag");
-        const cls = [
-          f.segIds.length ? "cited" : "",
-          isActive ? "active" : "",
-          isFlagged ? "flagged" : "",
-          f.segIds.length > 1 ? "multi" : "",
-          f.pointIds.length ? "key" : "",
-          selectedPoint && f.pointIds.includes(selectedPoint) ? "key-selected" : "",
-        ].join(" ");
-        return (
-          <span key={f.start}>
-            {tag}
-            <mark
-              data-start={f.start}
-              className={cls}
-              onMouseEnter={() => onHover(f.segIds)}
-              onClick={() => (f.segIds.length ? onPick(f.segIds[0]) : onPickPoint(f.pointIds[0]))}
-              title={
-                f.segIds.length
-                  ? `Cited by ${f.segIds.length} part${f.segIds.length === 1 ? "" : "s"} of the summary`
-                  : "A key passage marked by the expert"
-              }
-            >
-              {text}
-            </mark>
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-interface InspectorProps {
-  seg?: Segment;
-  sources: Source[];
-  verdict?: Verdict;
-  citeNumbers: Map<Citation, number>;
-  onVerdict: (v: Verdict | null) => void;
-  onCite: (c: Citation) => void;
-  onEdit: (text: string) => void;
-  onClose: () => void;
-}
-
-function Inspector({ seg, sources, verdict, citeNumbers, onVerdict, onCite, onEdit, onClose }: InspectorProps) {
-  const [draft, setDraft] = useState<string | null>(null);
-  useEffect(() => setDraft(null), [seg?.id]);
-
-  if (!seg) {
-    return (
-      <div className="inspector empty">
-        Hover a sentence to see where it came from. Click to pin it and review. <kbd>j</kbd>/<kbd>k</kbd> step through
-        claims, <kbd>v</kbd> verify, <kbd>f</kbd> flag.
-      </div>
-    );
-  }
-  const titleOf = (id: string) => sources.find((s) => s.id === id)?.title ?? "Unknown source";
-  return (
-    <div className="inspector">
-      <div className="inspector-head">
-        <strong>Claim</strong>
-        <div className="verdict-buttons">
-          <button className={verdict === "ok" ? "on ok" : ""} onClick={() => onVerdict(verdict === "ok" ? null : "ok")}>
-            ✓ Supported
-          </button>
-          <button className={verdict === "flag" ? "on flag" : ""} onClick={() => onVerdict(verdict === "flag" ? null : "flag")}>
-            ⚑ Flag
-          </button>
-          {draft === null && <button onClick={() => setDraft(seg.text)}>Edit</button>}
-          <button onClick={onClose} aria-label="Close">✕</button>
-        </div>
-      </div>
-      {draft === null ? (
-        <p className="inspector-claim">
-          {seg.text.trim()}
-          {seg.edited && <span className="edited-tag">edited</span>}
-        </p>
-      ) : (
-        <div className="edit-box">
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
-          <div className="edit-actions">
-            <span className="muted small">Links to the source stay attached. The sentence goes back to unreviewed.</span>
-            <button onClick={() => setDraft(null)}>Cancel</button>
-            <button
-              className="primary"
-              onClick={() => {
-                onEdit(draft);
-                setDraft(null);
-              }}
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      )}
-      {seg.citations.length === 0 ? (
-        <p className="warn-text">No citation. This statement isn't tied to any passage in the sources, so check it or remove it.</p>
-      ) : (
-        <ul className="quotes">
-          {seg.citations.map((c) => (
-            <li key={`${c.sourceId}:${c.start}`} onClick={() => onCite(c)}>
-              <span className="cite-chip static">{citeNumbers.get(c)}</span>
-              <blockquote>{c.quote.trim()}</blockquote>
-              <span className="quote-source">{titleOf(c.sourceId)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

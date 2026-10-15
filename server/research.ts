@@ -26,6 +26,8 @@ import type {
   ResearchUpdates,
 } from "../shared/types.js";
 import { getProvider } from "./llm/index.js";
+import { FALLBACK } from "./llm/anthropic.js";
+import { normalizeUrl, replayTurns } from "../shared/chat.js";
 import { findQuote } from "./spans.js";
 
 /** The slice of the SDK used here, so tests can substitute a fake. */
@@ -53,7 +55,6 @@ function getClient(): ResearchClient {
   return client;
 }
 
-const FALLBACK = { betas: ["server-side-fallback-2026-07-01"] as string[], fallbacks: "default" as const };
 /** Rounds of the agent loop per turn (tool results and paused server-tool turns each start a new round). */
 const MAX_ROUNDS = 8;
 /** No new round starts after this long, so one turn can't run on indefinitely. */
@@ -217,7 +218,6 @@ interface TurnContext {
   knownUrls: Set<string>;
 }
 
-const normalizeUrl = (u: string) => u.trim().replace(/#.*$/, "").replace(/\/$/, "").toLowerCase();
 
 function subQuestionCount(ctx: TurnContext): number {
   return ctx.updates.plan?.subQuestions.length ?? ctx.state.subQuestions.length;
@@ -337,15 +337,7 @@ function toPart(ctx: TurnContext, block: BetaTextBlock): ResearchPart {
 
 function buildMessages(body: ResearchChatRequest): BetaMessageParam[] {
   // Earlier turns are replayed as plain text; the notebook (sent with the newest message) carries the detail.
-  const history = (body.history ?? []).filter((m) => m.text.trim());
-  if (history[0]?.role === "assistant") history.shift();
-  const messages: BetaMessageParam[] = [];
-  for (const m of history) {
-    const last = messages[messages.length - 1];
-    if (last && last.role === m.role) last.content = `${last.content as string}\n\n${m.text}`;
-    else messages.push({ role: m.role, content: m.text });
-  }
-  if (messages[messages.length - 1]?.role === "user") messages.push({ role: "assistant", content: "(No reply.)" });
+  const messages: BetaMessageParam[] = replayTurns(body.history).map((m) => ({ role: m.role, content: m.text }));
   messages.push({ role: "user", content: `${notebookText(body.state)}\n\n${body.message.trim()}` });
   return messages;
 }

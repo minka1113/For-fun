@@ -4,6 +4,7 @@ import { fetchUrl } from "../lib/api";
 import { emptyResearch, notebookForRequest } from "../lib/research";
 import { clearRunError, getRun, startRun, stopRun, subscribeRuns } from "../lib/researchRuns";
 import { uid } from "../lib/storage";
+import { ChatInput } from "./ChatInput";
 
 interface Props {
   project: Project;
@@ -143,21 +144,7 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
               {error} <button className="link" onClick={() => clearRunError(project.id)}>dismiss</button>
             </p>
           )}
-          <div className="chat-input">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send(input);
-                }
-              }}
-              placeholder="Ask the research agent… (Enter to send, Shift+Enter for a new line)"
-            />
-            <button className="primary" disabled={!input.trim() || running} onClick={() => send(input)}>Send</button>
-          </div>
+          <ChatInput value={input} onChange={setInput} onSend={send} disabled={running} placeholder="Ask the research agent…" inputRef={inputRef} />
         </section>
 
         <aside className="notebook">

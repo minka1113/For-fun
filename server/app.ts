@@ -8,7 +8,7 @@ import { researchRouter } from "./research.js";
 import { type FetchedPage, UrlFetchError, fetchPublicUrl } from "./urlfetch.js";
 import { type LlmDoc, getProvider } from "./llm/index.js";
 import { packsRouter } from "./packs.js";
-import { hasCredentials, sendApiError } from "./respond.js";
+import { abortOnClose, hasCredentials, sendApiError } from "./respond.js";
 import { resolveSpan } from "./spans.js";
 import { MAX_PDF_BYTES, studyCopyFromPdf } from "./study.js";
 import type {
@@ -83,6 +83,7 @@ app.post("/api/summarize", async (req, res) => {
       system: SYSTEM_PROMPT,
       maxTokens: 32000,
       messages: [{ role: "user", text: instruction, docs: documents }],
+      signal: abortOnClose(res),
     });
 
     if (result.stopReason === "refusal") {
@@ -146,6 +147,7 @@ app.post("/api/check-style", async (req, res) => {
   try {
     const result = await getProvider().structured({
       system: STYLE_SYSTEM_PROMPT,
+      signal: abortOnClose(res),
       docs: documents,
       prompt: `Rules (numbered from 1):\n${rules.map((r, i) => `${i + 1}. ${r}`).join("\n")}\n\n<draft>\n${body.text}\n</draft>`,
       schema: StyleCheckSchema,
@@ -199,7 +201,7 @@ app.post("/api/fetch-url", async (req, res) => {
     // PDF reports (common in government and academic research) go through the study-copy conversion.
     if (!hasCredentials(res)) return;
     try {
-      const { title, text } = await studyCopyFromPdf(body);
+      const { title, text } = await studyCopyFromPdf(body, abortOnClose(res));
       const payload: FetchUrlResponse = { title: title || fallbackTitle, text, url: url.toString() };
       res.json(payload);
     } catch (err) {
@@ -226,7 +228,7 @@ app.post("/api/extract-pdf", express.raw({ type: () => true, limit: MAX_PDF_BYTE
   }
   if (!hasCredentials(res)) return;
   try {
-    const { title, text } = await studyCopyFromPdf(body);
+    const { title, text } = await studyCopyFromPdf(body, abortOnClose(res));
     const payload: ExtractPdfResponse = { title, text };
     res.json(payload);
   } catch (err) {

@@ -22,7 +22,8 @@ import type {
 } from "../shared/types.js";
 import { type LlmDoc, type LlmMessage, type LlmTextBlock, type ToolCall, type ToolDef, type ToolResult, getProvider } from "./llm/index.js";
 import { type LoadedPaper, loadOriginalPdf, loadPapers } from "./packs.js";
-import { hasCredentials, sendApiError } from "./respond.js";
+import { abortOnClose, hasCredentials, sendApiError } from "./respond.js";
+import { replayTurns } from "../shared/chat.js";
 import { findQuote, pageAt, resolveSpan } from "./spans.js";
 
 /** Roughly 600k tokens: leaves room in the 1M context for the conversation and thinking. */
@@ -205,6 +206,7 @@ expertRouter.post("/review", async (req, res) => {
   try {
     const result = await getProvider().structured({
       system: systemPrompt(ctx),
+      signal: abortOnClose(res),
       docs: documents(ctx, false),
       prompt: `${draftBlock(ctx.req.draft)}\n\n${REVIEW_TASK}`,
       schema: ReviewSchema,
@@ -410,27 +412,9 @@ expertRouter.post("/chat", async (req, res) => {
 
   // Earlier turns are replayed as plain text. The documents lead the first message so they
   // form a stable prefix that stays cached; the current draft goes with the newest question.
-  const history = (body.history ?? []).filter((m) => m.text.trim());
-  if (history[0]?.role === "assistant") history.shift();
   const current = `${draftBlock(ctx.req.draft)}\n\n${body.message.trim()}`;
-  const messages: LlmMessage[] = [];
-  const docs = documents(ctx, true);
-  if (history.length === 0) {
-    messages.push({ role: "user", text: current, docs });
-  } else {
-    messages.push({ role: "user", text: history[0].text, docs });
-    for (const m of history.slice(1)) {
-      const last = messages[messages.length - 1];
-      if (last.role === m.role) {
-        // Merge consecutive same-role turns (e.g. after a failed reply) so roles alternate.
-        last.text += `\n\n${m.text}`;
-      } else {
-        messages.push({ role: m.role, text: m.text });
-      }
-    }
-    if (messages[messages.length - 1].role === "user") messages.push({ role: "assistant", text: "(No reply.)" });
-    messages.push({ role: "user", text: current });
-  }
+  const [first, ...rest] = [...replayTurns(body.history), { role: "user" as const, text: current }];
+  const messages: LlmMessage[] = [{ role: "user", text: first.text, docs: documents(ctx, true) }, ...rest];
 
   const parts: ChatPart[] = [];
   const actions: ChatAction[] = [];
@@ -438,10 +422,11 @@ expertRouter.post("/chat", async (req, res) => {
   const provider = getProvider();
   const tools = TOOLS.filter((t) => t.name !== "view_original_pdf" || provider.capabilities.pdfInput);
   const system = systemPrompt(ctx) + chatGuide(provider.capabilities.pdfInput);
+  const signal = abortOnClose(res);
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const result = await provider.generate({ system, messages, tools, maxTokens: 16000, cache: true });
+      const result = await provider.generate({ system, messages, tools, maxTokens: 16000, cache: true, signal });
       if (result.stopReason === "refusal") {
         res.status(422).json({ error: "The model declined to answer that." });
         return;
