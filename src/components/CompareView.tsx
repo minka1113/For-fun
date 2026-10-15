@@ -83,6 +83,10 @@ export function CompareView({ summary, sources, styles, sharedRules, project, pa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.id]);
 
+  const coverageBySource = useMemo(
+    () => new Map(summarySources.map((s) => [s.id, coverage(s.text, s.id, summary.segments)])),
+    [summarySources, summary.segments],
+  );
   const segById = useMemo(() => new Map(summary.segments.map((s) => [s.id, s])), [summary.segments]);
   const claims = useMemo(
     () => summary.segments.filter((s) => s.citations.length > 0 || isUnsupported(s)),
@@ -458,7 +462,7 @@ export function CompareView({ summary, sources, styles, sharedRules, project, pa
         <section className="pane source-pane" aria-label="Source">
           <div className="tabs" role="tablist">
             {summarySources.map((s) => {
-              const cov = coverage(s.text, s.id, summary.segments);
+              const cov = coverageBySource.get(s.id) ?? 0;
               const hasActive = active?.citations.some((c) => c.sourceId === s.id);
               return (
                 <button

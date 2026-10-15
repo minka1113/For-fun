@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Pack, Project, Source, Summary } from "../shared/types";
 import { AddSourceModal } from "./components/AddSourceModal";
 import { CompareView } from "./components/CompareView";
@@ -39,7 +39,23 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  useEffect(() => setStorageFull(!saveWorkspace(ws)), [ws]);
+  // Saving serialises the whole workspace, so wait for a pause in typing; save at once if the tab is hidden or closed.
+  const latest = useRef(ws);
+  latest.current = ws;
+  useEffect(() => {
+    const t = setTimeout(() => setStorageFull(!saveWorkspace(ws)), 400);
+    return () => clearTimeout(t);
+  }, [ws]);
+  useEffect(() => {
+    const flush = () => setStorageFull(!saveWorkspace(latest.current));
+    const onHide = () => document.visibilityState === "hidden" && flush();
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, []);
 
   /* ----- Knowledge packs live on the server; poll while papers are converting ----- */
 

@@ -19,6 +19,33 @@ const dir = (packId: string) => path.join(ROOT, packId);
 const originalPath = (packId: string, paper: Paper) => path.join(dir(packId), `${paper.id}.${paper.kind === "pdf" ? "pdf" : "txt"}`);
 const studyPath = (packId: string, paperId: string) => path.join(dir(packId), `${paperId}.md`);
 
+// Study copies are read on every expert request, so keep them in memory once read.
+// Every write goes through writeStudy, so the cache never goes stale.
+const studies = new Map<string, string>();
+
+async function readStudy(packId: string, paperId: string): Promise<string> {
+  const key = studyPath(packId, paperId);
+  let text = studies.get(key);
+  if (text === undefined) {
+    text = await readFile(key, "utf8");
+    studies.set(key, text);
+  }
+  return text;
+}
+
+async function writeStudy(packId: string, paperId: string, text: string): Promise<void> {
+  const key = studyPath(packId, paperId);
+  studies.delete(key);
+  await writeFile(key, text);
+  studies.set(key, text);
+}
+
+function forgetStudies(packId: string, paperId?: string): void {
+  if (paperId) return void studies.delete(studyPath(packId, paperId));
+  const prefix = dir(packId) + path.sep;
+  for (const key of studies.keys()) if (key.startsWith(prefix)) studies.delete(key);
+}
+
 // Saves to one pack run one at a time, each through its own temporary file, so overlapping
 // requests (several uploads, or a conversion finishing during an upload) can't collide.
 const saving = new Map<string, Promise<void>>();
@@ -91,7 +118,7 @@ async function convert(packId: string, paperId: string): Promise<void> {
   try {
     const { title, text } = await studyCopyFromPdf(await readFile(originalPath(packId, paper)));
     if (!packs.has(packId) || !pack.papers.includes(paper)) return; // deleted while converting
-    await writeFile(studyPath(packId, paperId), text);
+    await writeStudy(packId, paperId, text);
     if (title && paper.title === paper.fileName.replace(/\.[^.]+$/, "")) paper.title = title;
     paper.status = "ready";
     paper.chars = text.length;
@@ -120,7 +147,7 @@ export async function loadPapers(packIds: string[]): Promise<LoadedPaper[]> {
     if (!pack) continue;
     for (const paper of pack.papers) {
       if (paper.status !== "ready") continue;
-      out.push({ pack, paper, study: await readFile(studyPath(pack.id, paper.id), "utf8") });
+      out.push({ pack, paper, study: await readStudy(pack.id, paper.id) });
     }
   }
   return out;
@@ -178,6 +205,7 @@ packsRouter.delete("/:packId", async (req, res) => {
   const pack = findPack(req, res);
   if (!pack) return;
   packs.delete(pack.id);
+  forgetStudies(pack.id);
   await rm(dir(pack.id), { recursive: true, force: true });
   res.json({ ok: true });
 });
@@ -212,7 +240,7 @@ packsRouter.post("/:packId/papers", express.raw({ type: () => true, limit: MAX_P
   await writeFile(originalPath(pack.id, paper), body);
   if (!isPdf) {
     const text = body.toString("utf8");
-    await writeFile(studyPath(pack.id, paper.id), text);
+    await writeStudy(pack.id, paper.id, text);
     paper.chars = text.length;
   }
   pack.papers.push(paper);
@@ -225,7 +253,7 @@ packsRouter.get("/:packId/papers/:paperId", async (req, res) => {
   const pack = findPack(req, res);
   const paper = pack && findPaper(pack, req, res);
   if (!pack || !paper) return;
-  const study = paper.status === "ready" ? await readFile(studyPath(pack.id, paper.id), "utf8") : "";
+  const study = paper.status === "ready" ? await readStudy(pack.id, paper.id) : "";
   const detail: PaperDetail = { ...paper, study };
   res.json(detail);
 });
@@ -237,7 +265,7 @@ packsRouter.put("/:packId/papers/:paperId", async (req, res) => {
   if (!pack || !paper) return;
   const { study, title } = req.body as { study?: string; title?: string };
   if (typeof study === "string" && paper.status === "ready") {
-    await writeFile(studyPath(pack.id, paper.id), study);
+    await writeStudy(pack.id, paper.id, study);
     paper.chars = study.length;
   }
   if (typeof title === "string" && title.trim()) paper.title = title.trim();
@@ -267,6 +295,7 @@ packsRouter.delete("/:packId/papers/:paperId", async (req, res) => {
   if (!pack || !paper) return;
   pack.papers = pack.papers.filter((p) => p.id !== paper.id);
   await rm(originalPath(pack.id, paper), { force: true });
+  forgetStudies(pack.id, paper.id);
   await rm(studyPath(pack.id, paper.id), { force: true });
   await save(pack);
   res.json({ ok: true });
