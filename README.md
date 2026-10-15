@@ -92,7 +92,7 @@ Every request enables the API's server-side fallback, so if the model declines a
 - `server/expert.ts`: the expert. Papers are labelled `[B1]…` and sources `[S1]…` in document titles, so citations and tool inputs map back reliably. Review uses structured outputs; chat runs a tool loop (`suggest_edit`, `add_context_note`, `mark_key_passage`, `view_original_pdf`) whose actions come back to the browser as suggestion cards. Background papers and sources use one-hour prompt caching.
 - `server/research.ts`: the research agent. It uses Claude's server-side web search and web fetch tools directly (so it needs the Anthropic provider) plus its own notebook tools (`update_plan`, `propose_source`, `record_finding`, `note_gap`), resumes paused turns, and streams progress to the browser as server-sent events. Finding quotes are checked against the text of pages it read.
 - `server/index.ts` starts the server. `server/packs.ts` and `server/study.ts`: knowledge-pack storage and the PDF-to-study-copy conversion queue.
-- `src/components/CompareView.tsx` and `ExpertPane.tsx`: the side-by-side view and the expert panel. Source text is split at every citation and key-passage boundary (`src/lib/spans.ts`) so overlapping highlights render correctly.
+- `src/components/CompareView.tsx` and `ExpertPane.tsx`: the side-by-side view and the expert panel (with `DraftText`, `SourceText` and `Inspector` for its parts). Source text is split at every citation and key-passage boundary (`src/lib/spans.ts`) so overlapping highlights render correctly.
 - `shared/`: types, default rules and drafting styles shared by server and browser.
 
 ## Limitations
@@ -100,3 +100,4 @@ Every request enables the API's server-side fallback, so if the model declines a
 - The expert reads whole study copies, up to about 400,000 words across a project's packs and sources. Larger libraries would need search, which isn't built yet.
 - Study copies are made by the model reading the PDF. Check tables and figure descriptions that matter using the paper's side-by-side review screen.
 - URL import uses a simple HTML-to-text extractor, so some pages need tidying after import.
+- URL import refuses addresses on private or internal networks (including `localhost`), so the server can't be used to reach internal services. To import from a machine on your own network, start the server with `ALLOW_PRIVATE_URLS=1`.
