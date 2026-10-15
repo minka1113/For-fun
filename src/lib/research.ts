@@ -1,11 +1,11 @@
 import type { Candidate, Finding, Gap, ResearchChatRequest, ResearchChatResult, ResearchMessage, ResearchState, SubQuestion } from "../../shared/types";
 import { uid } from "./storage";
+import { normalizeUrl } from "../../shared/chat";
 
 export function emptyResearch(): ResearchState {
   return { question: "", subQuestions: [], candidates: [], findings: [], gaps: [], chat: [] };
 }
 
-const normalizeUrl = (u: string) => u.trim().replace(/#.*$/, "").replace(/\/$/, "").toLowerCase();
 
 /** The compact notebook summary sent with each research message. */
 export function notebookForRequest(r: ResearchState): ResearchChatRequest["state"] {

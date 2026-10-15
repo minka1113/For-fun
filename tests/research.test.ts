@@ -8,8 +8,9 @@ import { app } from "../server/app.js";
 import { setProvider } from "../server/llm/index.js";
 import { AnthropicProvider, type AnthropicLike } from "../server/llm/anthropic.js";
 import { LocalProvider } from "../server/llm/local.js";
-import { type ResearchClient, setResearchClient, setTurnBudgetMs } from "../server/research.js";
+import { type ResearchClient, setRequestTimeoutMs, setResearchClient, setTurnBudgetMs } from "../server/research.js";
 import { makePdf } from "./helpers/pdf.js";
+import { setAllowPrivateUrls } from "../server/urlfetch.js";
 import type { ResearchChatRequest, ResearchEvent } from "../shared/types.js";
 
 let server: Server;
@@ -25,6 +26,7 @@ afterEach(() => {
   setProvider(null);
   setResearchClient(null);
   setTurnBudgetMs(null);
+  setRequestTimeoutMs(null);
 });
 
 /** A fake client that returns one scripted message per request and records what was sent. */
@@ -216,6 +218,7 @@ test("POST /api/fetch-url imports a PDF report through the study-copy conversion
   site.listen(0, "127.0.0.1");
   await new Promise((resolve) => site.once("listening", resolve));
   setProvider(new LocalProvider({ baseUrl: "http://127.0.0.1:1", model: "x", timeoutMs: 1000 }));
+  setAllowPrivateUrls(true); // the stand-in site runs on this machine
   try {
     const res = await fetch(`${base}/api/fetch-url`, {
       method: "POST",
@@ -227,6 +230,7 @@ test("POST /api/fetch-url imports a PDF report through the study-copy conversion
     assert.equal(json.title, "Canopy report 2024");
     assert.match(json.text, /Canopy report 2024/);
   } finally {
+    setAllowPrivateUrls(false);
     site.close();
   }
 });
@@ -293,4 +297,39 @@ test("stopping in the browser aborts the model call in flight", async () => {
   controller.abort();
   for (let i = 0; i < 50 && !aborted; i++) await new Promise((r) => setTimeout(r, 20));
   assert.equal(aborted, true);
+});
+
+test("a model call that stalls mid-stream is stopped by the per-call time limit", async () => {
+  setRequestTimeoutMs(50);
+  setProvider(new AnthropicProvider("claude-test", {} as AnthropicLike));
+  setResearchClient({
+    beta: {
+      messages: {
+        stream() {
+          let reject: (e: Error) => void = () => {};
+          return {
+            on() {
+              return this;
+            },
+            // Started, then silent: never settles until aborted.
+            finalMessage: () => new Promise((_, r) => (reject = r)),
+            abort: () => reject(new Error("aborted")),
+          };
+        },
+      },
+    },
+  });
+  const events = await research({ state: EMPTY_STATE, history: [], message: "Hi" });
+  const last = events.at(-1) as Extract<ResearchEvent, { type: "error" }>;
+  assert.equal(last.type, "error");
+  assert.match(last.error, /took longer than/);
+});
+
+test("a turn that runs out of rounds mid-work says it paused", async () => {
+  const toolRound = { stop_reason: "tool_use", content: [{ type: "tool_use", id: "g", name: "note_gap", input: { gap: "More", sub_question: 0 } }] };
+  const calls = scripted(Array(8).fill(toolRound));
+  const events = await research({ state: EMPTY_STATE, history: [], message: "Hi" });
+  assert.equal(calls.length, 8);
+  const { result } = events.at(-1) as Extract<ResearchEvent, { type: "done" }>;
+  assert.match(result.text, /paused here/);
 });

@@ -8,17 +8,18 @@ import { ResearchView } from "./components/ResearchView";
 import { emptyResearch } from "./lib/research";
 import { Sidebar, type View } from "./components/Sidebar";
 import { StylesModal } from "./components/StylesModal";
+import { Home, SourcePreview } from "./components/Home";
 import { listPacks, summarize } from "./lib/api";
 import { DEMO_PROJECT_ID, demoProject } from "./lib/demo";
 import { download, notebookToMarkdown } from "./lib/export";
-import { copyStyles, loadWorkspace, newProject, rulesFor, saveWorkspace, styleOf, uid, type Workspace } from "./lib/storage";
+import { copyStyles, newProject, rulesFor, styleOf, uid, type Workspace } from "./lib/storage";
+import { useSavedWorkspace } from "./lib/useSavedWorkspace";
 import { DEFAULT_STYLES } from "../shared/styles";
 
 const EDIT_STYLES = "__edit-styles";
 
 export function App() {
-  const [ws, setWs] = useState<Workspace>(loadWorkspace);
-  const [storageFull, setStorageFull] = useState(false);
+  const [ws, setWs, storageFull] = useSavedWorkspace();
   const project = ws.projects.find((p) => p.id === ws.activeProjectId) ?? ws.projects[0];
 
   const [packs, setPacks] = useState<Pack[]>([]);
@@ -38,8 +39,6 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  useEffect(() => setStorageFull(!saveWorkspace(ws)), [ws]);
 
   /* ----- Knowledge packs live on the server; poll while papers are converting ----- */
 
@@ -352,70 +351,4 @@ function styleUsage(ws: Workspace): Record<string, number> {
   const usage: Record<string, number> = {};
   for (const p of ws.projects) for (const s of p.summaries) if (s.styleId) usage[s.styleId] = (usage[s.styleId] ?? 0) + 1;
   return usage;
-}
-
-function SourcePreview({
-  source,
-  usedBy,
-  onRename,
-  onDelete,
-}: {
-  source: Source;
-  usedBy: number;
-  onRename: (title: string) => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="preview">
-      <header className="compare-header">
-        <div className="compare-title">
-          <input className="title-input" value={source.title} onChange={(e) => onRename(e.target.value)} aria-label="Source title" />
-          <div className="meta">
-            {source.origin ?? "Pasted text"} · {source.text.length.toLocaleString()} characters
-          </div>
-        </div>
-        <div className="toolbar">
-          <button
-            className="danger"
-            onClick={() => {
-              const warning = usedBy
-                ? `This source is used by ${usedBy} summar${usedBy === 1 ? "y" : "ies"}; they will lose their side-by-side view. Delete anyway?`
-                : "Delete this source?";
-              if (confirm(warning)) onDelete();
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      </header>
-      <div className="pane-scroll">
-        <div className="source-text standalone">{source.text}</div>
-      </div>
-    </div>
-  );
-}
-
-function Home({ project, onAdd, onDemo, onSettings }: { project: Project; onAdd: () => void; onDemo: () => void; onSettings: () => void }) {
-  return (
-    <div className="home">
-      <h1>{project.name || "Summaries you can check."}</h1>
-      <p>
-        Add the sources for this briefing, generate a draft, and read it side by side with the originals. Every sentence links to
-        the passages it came from, and a subject-matter expert helps you focus on what matters.
-      </p>
-      <ol>
-        <li><strong>Add sources</strong>: paste text, upload files or PDFs, or fetch a URL.</li>
-        <li><strong>Summarise</strong> the ones you've ticked, in the drafting style you choose.</li>
-        <li><strong>Compare</strong>: hover a sentence to highlight its source passages, then mark it verified or flagged.</li>
-        <li><strong>Check style</strong> against the rules for the draft's briefing style and apply the fixes.</li>
-        <li><strong>Ask the expert</strong>: attach knowledge packs, then run an expert review or chat about what matters most.</li>
-        <li><strong>Compile</strong>: drafts export to Markdown with quoted footnotes and, optionally, the expert's context notes.</li>
-      </ol>
-      <div className="home-actions">
-        <button className="primary" onClick={onAdd}>{project.sources.length ? "Add another source" : "Add your first source"}</button>
-        <button onClick={onSettings}>Project settings</button>
-        <button onClick={onDemo}>Explore an example</button>
-      </div>
-    </div>
-  );
 }

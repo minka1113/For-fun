@@ -350,11 +350,8 @@ button.on-accent { background: var(--expert-soft); border-color: var(--expert); 
 
 /* Styles and projects */
 .modal.wide { width: min(820px, 100%); }
-.style-editor { display: flex; flex-direction: column; gap: 10px; overflow: auto; min-height: 0; }
-.style-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .style-card-head { display: flex; gap: 6px; }
 .style-card-head input { flex: 1; font-weight: 600; }
-.style-card textarea { min-height: 70px; resize: vertical; }
 .project-row { display: flex; gap: 6px; }
 .project-row select { flex: 1; min-width: 0; }
 .question { margin: 6px 0 0; }

@@ -17,8 +17,8 @@ const STUDY_PROMPT = `Produce a faithful study copy of this PDF as Markdown, so 
 - Keep equations, footnotes, and reference lists.
 - Output only the study copy, with no commentary before or after it.`;
 
-export async function studyCopyFromPdf(pdf: Buffer): Promise<{ title: string; text: string }> {
-  const text = await getProvider().pdfToMarkdown(pdf, STUDY_PROMPT);
+export async function studyCopyFromPdf(pdf: Buffer, signal?: AbortSignal): Promise<{ title: string; text: string }> {
+  const text = await getProvider().pdfToMarkdown(pdf, STUDY_PROMPT, signal);
   if (!text) throw new Error("No text came back for this PDF.");
   const title = text.match(/^#\s+(.+)$/m)?.[1].trim() ?? "";
   return { title, text };

@@ -73,7 +73,7 @@ export class LocalProvider implements LlmProvider {
     const docs = allDocs(req.messages);
     const citable = docs.some((d) => d.citations);
     const messages = toWire(req.system + (citable ? citationInstructions(docs) : ""), req.messages);
-    const done = await this.complete(messages, req.maxTokens, req.tools);
+    const done = await this.complete(messages, req.maxTokens, req.tools, req.signal);
 
     let text = stripThinking(done.content);
     let calls: ToolCall[] = done.toolCalls.map((c) => ({ id: c.id, name: c.name, input: parseArgs(c.args) }));
@@ -104,7 +104,7 @@ export class LocalProvider implements LlmProvider {
 
     let last = "";
     for (let attempt = 0; attempt < 2; attempt++) {
-      const done = await this.complete(messages, req.maxTokens);
+      const done = await this.complete(messages, req.maxTokens, undefined, req.signal);
       if (done.finish === "content_filter") return { refused: true };
       last = done.content;
       let problem: string;
@@ -134,7 +134,7 @@ export class LocalProvider implements LlmProvider {
   }
 
   /** One streamed chat completion. */
-  private async complete(messages: WireMessage[], maxTokens: number, tools?: GenerateRequest["tools"]): Promise<Completion> {
+  private async complete(messages: WireMessage[], maxTokens: number, tools?: GenerateRequest["tools"], signal?: AbortSignal): Promise<Completion> {
     const { baseUrl, apiKey, timeoutMs } = this.opts;
     const doFetch = this.opts.fetch ?? fetch;
     const body = {
@@ -153,7 +153,7 @@ export class LocalProvider implements LlmProvider {
         method: "POST",
         headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
       throw networkError(err, baseUrl, timeoutMs);

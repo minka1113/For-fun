@@ -58,20 +58,30 @@ export async function startRun(
 
   let progress: ResearchUpdates | null = null;
   let partialText = "";
+  /** False until the server starts streaming; a request refused outright leaves no reply in the chat. */
+  let started = false;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
   const lines: string[] = [];
   try {
     const result = await researchChat(
       req,
       {
         onStatus: (line) => {
+          started = true;
           lines.push(line);
           set(projectId, { statusLines: [...lines] });
         },
         onText: (t) => {
+          started = true;
           partialText += t;
-          set(projectId, { liveText: partialText });
+          // Text arrives a few characters at a time; update the screen at most ten times a second.
+          flushTimer ??= setTimeout(() => {
+            flushTimer = null;
+            set(projectId, { liveText: partialText });
+          }, 100);
         },
         onProgress: (updates) => {
+          started = true;
           progress = updates;
         },
       },
@@ -84,6 +94,11 @@ export async function startRun(
     const stopped = controller.signal.aborted;
     const reason =
       e instanceof TypeError ? "Couldn't reach the server. Check your connection, or reload the page if you were signed out." : (e as Error).message;
+    if (!started) {
+      // Refused before the turn began (e.g. no API key, wrong provider): just show the error.
+      set(projectId, { running: false, statusLines: [], liveText: "", error: stopped ? null : reason });
+      return null;
+    }
     // Keep whatever this turn found before it ended.
     const note = stopped
       ? "(Stopped. Anything found so far is in the notebook.)"
@@ -101,6 +116,7 @@ export async function startRun(
     set(projectId, { running: false, statusLines: [], liveText: "", error: stopped ? null : reason });
     return saved;
   } finally {
+    if (flushTimer) clearTimeout(flushTimer);
     controllers.delete(projectId);
   }
 }
