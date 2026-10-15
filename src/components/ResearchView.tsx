@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Candidate, Project, ResearchMessage, ResearchState, Source, SourceKind } from "../../shared/types";
 import { fetchUrl } from "../lib/api";
 import { emptyResearch, notebookForRequest } from "../lib/research";
@@ -38,10 +38,15 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
   const run = useSyncExternalStore(subscribeRuns, () => getRun(project.id));
   const { running, statusLines, liveText, startedAt, error } = run;
   const [now, setNow] = useState(Date.now());
-  const logEnd = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  /** Whether the chat is scrolled to the bottom; if you scroll up to read, new text doesn't pull you back down. */
+  const following = useRef(true);
 
-  useEffect(() => logEnd.current?.scrollIntoView({ block: "end" }), [research.chat.length, statusLines.length, liveText.length > 0]);
+  useEffect(() => {
+    const log = logRef.current;
+    if (log && following.current) log.scrollTop = log.scrollHeight;
+  }, [research.chat.length, statusLines.length, liveText]);
   // Tick the elapsed-time display while a turn runs.
   useEffect(() => {
     if (!running) return;
@@ -88,7 +93,14 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
 
       <div className="research-body">
         <section className="research-chat">
-          <div className="chat-log">
+          <div
+            className="chat-log"
+            ref={logRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            }}
+          >
             {research.chat.length === 0 && (
               <div className="starters">
                 <p className="muted small">
@@ -111,34 +123,7 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
                 ))}
               </div>
             )}
-            {research.chat.map((m) => (
-              <div key={m.id} className={`bubble ${m.role}`}>
-                {m.role === "user" ? (
-                  m.text
-                ) : (
-                  <>
-                    <div className="assistant-text">
-                      {(m.parts ?? [{ text: m.text, refs: [] }]).map((p, i) => (
-                        <span key={i}>
-                          {p.text}
-                          {p.refs.map((r, j) => (
-                            <a key={j} className="ref-chip web" href={r.url} target="_blank" rel="noreferrer" title={`${r.title}: ${r.quote}`}>
-                              ↗
-                            </a>
-                          ))}
-                        </span>
-                      ))}
-                    </div>
-                    {m.activity && m.activity.length > 0 && (
-                      <details className="activity">
-                        <summary>{activitySummary(m.activity)}</summary>
-                        <ul>{m.activity.map((a, i) => <li key={i}>{a}</li>)}</ul>
-                      </details>
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
+            <ChatHistory messages={research.chat} />
             {running && (
               <div className="bubble assistant live">
                 <div className="live-head">
@@ -152,7 +137,6 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
                 <div className="muted small">A turn can take a few minutes while the agent searches and reads. Stopping keeps what it has found so far.</div>
               </div>
             )}
-            <div ref={logEnd} />
           </div>
           {error && (
             <p className="error small pad">
@@ -197,6 +181,42 @@ export function ResearchView({ project, onUpdate, onAddSource, onStartBriefing }
   );
 }
 
+/** Past messages. Kept separate so streaming a new reply doesn't redraw the whole history. */
+const ChatHistory = memo(function ChatHistory({ messages }: { messages: ResearchMessage[] }) {
+  return (
+    <>
+      {messages.map((m) => (
+        <div key={m.id} className={`bubble ${m.role}`}>
+          {m.role === "user" ? (
+            m.text
+          ) : (
+            <>
+              <div className="assistant-text">
+                {(m.parts ?? [{ text: m.text, refs: [] }]).map((p, i) => (
+                  <span key={i}>
+                    {p.text}
+                    {p.refs.map((r, j) => (
+                      <a key={j} className="ref-chip web" href={r.url} target="_blank" rel="noreferrer" title={`${r.title}: ${r.quote}`}>
+                        ↗
+                      </a>
+                    ))}
+                  </span>
+                ))}
+              </div>
+              {m.activity && m.activity.length > 0 && (
+                <details className="activity">
+                  <summary>{activitySummary(m.activity)}</summary>
+                  <ul>{m.activity.map((a, i) => <li key={i}>{a}</li>)}</ul>
+                </details>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+    </>
+  );
+});
+
 function formatElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -211,7 +231,7 @@ function activitySummary(lines: string[]): string {
 
 /* ---------- Plan ---------- */
 
-function PlanTab({ research, onUpdate }: { research: ResearchState; onUpdate: Props["onUpdate"] }) {
+const PlanTab = memo(function PlanTab({ research, onUpdate }: { research: ResearchState; onUpdate: Props["onUpdate"] }) {
   const counts = (id?: string) => ({
     sources: research.candidates.filter((c) => c.status !== "dismissed" && (id ? c.subQuestionIds.includes(id) : c.subQuestionIds.length === 0)).length,
     findings: research.findings.filter((f) => f.subQuestionId === id).length,
@@ -258,7 +278,7 @@ function PlanTab({ research, onUpdate }: { research: ResearchState; onUpdate: Pr
       )}
     </div>
   );
-}
+});
 
 function GapRow({ text, onRemove }: { text: string; onRemove: () => void }) {
   return (
@@ -272,7 +292,7 @@ function GapRow({ text, onRemove }: { text: string; onRemove: () => void }) {
 
 /* ---------- Sources ---------- */
 
-function SourcesTab({ research, project, onUpdate, onAddSource }: { research: ResearchState; project: Project; onUpdate: Props["onUpdate"]; onAddSource: Props["onAddSource"] }) {
+const SourcesTab = memo(function SourcesTab({ research, project, onUpdate, onAddSource }: { research: ResearchState; project: Project; onUpdate: Props["onUpdate"]; onAddSource: Props["onAddSource"] }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showDismissed, setShowDismissed] = useState(false);
@@ -343,11 +363,11 @@ function SourcesTab({ research, project, onUpdate, onAddSource }: { research: Re
       )}
     </div>
   );
-}
+});
 
 /* ---------- Findings ---------- */
 
-function FindingsTab({ research, onUpdate }: { research: ResearchState; onUpdate: Props["onUpdate"] }) {
+const FindingsTab = memo(function FindingsTab({ research, onUpdate }: { research: ResearchState; onUpdate: Props["onUpdate"] }) {
   if (research.findings.length === 0) return <p className="muted small">No findings yet. They appear as the agent reads sources.</p>;
   const groups = [
     ...research.subQuestions.map((q, i) => ({ label: `Q${i + 1}. ${q.text}`, items: research.findings.filter((f) => f.subQuestionId === q.id) })),
@@ -377,4 +397,4 @@ function FindingsTab({ research, onUpdate }: { research: ResearchState; onUpdate
       ))}
     </div>
   );
-}
+});

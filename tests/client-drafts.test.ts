@@ -229,3 +229,25 @@ test("the example project builds, with every demo quote found in its source", ()
   const text = fullText(summary.segments);
   for (const v of summary.styleCheck!.violations) assert.ok(text.includes(v.quote), v.quote);
 });
+
+test("an edit only tidies the text around it, never elsewhere in the draft", () => {
+  const segs: Segment[] = [
+    { id: "a", text: "A ratio of 3 : 1 held.", citations: [cite(0, 3)] },
+    { id: "b", text: " ", citations: [] },
+    { id: "c", text: "Drop this.", citations: [] },
+    { id: "d", text: " Costs  fell ,  slightly.", citations: [cite(4, 8)] },
+  ];
+  const text = fullText(segs);
+  const start = text.indexOf("Drop this.");
+  const { segments } = replaceRange(segs, start, start + "Drop this.".length, "");
+  assert.equal(fullText(segments), "A ratio of 3 : 1 held. Costs  fell ,  slightly.");
+});
+
+test("limits on parts of a draft are not counted as whole-draft word limits", () => {
+  assert.deepEqual(parseWordLimit("Keep it under 250 words"), { max: 250, strict: true });
+  assert.deepEqual(parseWordLimit("Total length: no more than 300 words"), { max: 300, strict: false });
+  assert.deepEqual(parseWordLimit("The summary must be no more than 200 words"), { max: 200, strict: false });
+  assert.equal(parseWordLimit("Headline of no more than 12 words"), null);
+  assert.equal(parseWordLimit("Quotes of up to 25 words"), null);
+  assert.equal(parseWordLimit("Opening sentence of under 20 words"), null);
+});

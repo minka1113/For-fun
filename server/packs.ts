@@ -19,11 +19,22 @@ const dir = (packId: string) => path.join(ROOT, packId);
 const originalPath = (packId: string, paper: Paper) => path.join(dir(packId), `${paper.id}.${paper.kind === "pdf" ? "pdf" : "txt"}`);
 const studyPath = (packId: string, paperId: string) => path.join(dir(packId), `${paperId}.md`);
 
-async function save(pack: Pack): Promise<void> {
+// Saves to one pack run one at a time, each through its own temporary file, so overlapping
+// requests (several uploads, or a conversion finishing during an upload) can't collide.
+const saving = new Map<string, Promise<void>>();
+
+function save(pack: Pack): Promise<void> {
+  const next = (saving.get(pack.id) ?? Promise.resolve()).catch(() => {}).then(() => write(pack));
+  saving.set(pack.id, next);
+  return next;
+}
+
+async function write(pack: Pack): Promise<void> {
   await mkdir(dir(pack.id), { recursive: true });
   const file = path.join(dir(pack.id), "pack.json");
-  await writeFile(`${file}.tmp`, JSON.stringify(pack, null, 2));
-  await rename(`${file}.tmp`, file);
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  await writeFile(tmp, JSON.stringify(pack, null, 2));
+  await rename(tmp, file);
 }
 
 export async function loadPacks(): Promise<void> {
@@ -64,7 +75,9 @@ function pump(): void {
   while (running < CONCURRENCY && queue.length) {
     const job = queue.shift()!;
     running++;
-    convert(job.packId, job.paperId).finally(() => {
+    convert(job.packId, job.paperId)
+      .catch((err) => console.error("Paper conversion failed:", err))
+      .finally(() => {
       running--;
       pump();
     });

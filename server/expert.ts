@@ -57,8 +57,12 @@ function documents(ctx: Ctx, citations: boolean): LlmDoc[] {
   return [...papers, ...sources];
 }
 
-function labelNumber(label: string, prefix: "B" | "S"): number | null {
-  const m = label.match(new RegExp(`\\b${prefix}(\\d+)\\b`));
+/**
+ * The number in a leading "[S2]" / "B3" label. Only the start counts, so a paper whose title
+ * mentions something like "Table S2" isn't mistaken for a source.
+ */
+export function labelNumber(label: string, prefix: "B" | "S"): number | null {
+  const m = label.trim().match(new RegExp(`^\\[?${prefix}(\\d+)\\b`));
   return m ? Number(m[1]) - 1 : null;
 }
 

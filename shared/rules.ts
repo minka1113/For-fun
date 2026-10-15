@@ -15,11 +15,22 @@ export interface WordLimit {
 
 const WORD_LIMIT = /\b(no more than|not more than|at most|max(?:imum)?(?: of)?|up to|under|fewer than|less than|below)\s+(\d[\d,]*)\s+words?\b/i;
 
-/** A limit on the whole draft's length. Limits on parts ("each bullet under 30 words") are left for Claude to judge. */
+/** Words that can lead into a whole-draft limit ("Keep it under 250 words", "Total length: no more than…"). */
+const LEAD_IN = new Set(["keep", "it", "the", "to", "be", "should", "must", "a", "total", "in", "length", "overall", "of", "is", "at", "with"]);
+/** Nouns that make a limit clearly about the whole draft. */
+const WHOLE_DRAFT = /\b(summary|summaries|draft|briefing|brief|document|report|overall|total|whole|entire)\b/i;
+
+/**
+ * A limit on the whole draft's length. Limits on parts ("each bullet under 30 words", "Headline of
+ * no more than 12 words") are left for Claude to judge.
+ */
 export function parseWordLimit(rule: string): WordLimit | null {
-  if (/\b(each|every|per|bullets?|sentences?|paragraphs?|points?|lines?|headings?|titles?)\b/i.test(rule)) return null;
+  if (/\b(each|every|per|bullets?|sentences?|paragraphs?|points?|lines?|headings?|headlines?|titles?|quotes?|captions?)\b/i.test(rule)) return null;
   const m = rule.match(WORD_LIMIT);
   if (!m) return null;
+  // Whatever comes before the limit must be a plain lead-in, or name the whole draft.
+  const before = rule.slice(0, m.index).toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+  if (!before.every((w) => LEAD_IN.has(w)) && !WHOLE_DRAFT.test(rule)) return null;
   const strict = /^(under|fewer than|less than|below)$/i.test(m[1]);
   return { max: Number(m[2].replace(/,/g, "")), strict };
 }

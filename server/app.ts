@@ -5,6 +5,7 @@ import { z } from "zod";
 import { htmlToText } from "./extract.js";
 import { expertRouter } from "./expert.js";
 import { researchRouter } from "./research.js";
+import { type FetchedPage, UrlFetchError, fetchPublicUrl } from "./urlfetch.js";
 import { type LlmDoc, getProvider } from "./llm/index.js";
 import { packsRouter } from "./packs.js";
 import { hasCredentials, sendApiError } from "./respond.js";
@@ -177,59 +178,43 @@ app.post("/api/check-style", async (req, res) => {
 });
 
 app.post("/api/fetch-url", async (req, res) => {
-  const raw = String((req.body as { url?: string }).url ?? "").trim();
-  let url: URL;
+  const raw = String((req.body as { url?: string }).url ?? "");
+  let page: FetchedPage;
   try {
-    url = new URL(raw);
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("bad protocol");
-  } catch {
-    res.status(400).json({ error: "Enter a full http(s) URL." });
+    // Refuses private and internal addresses, and stops downloading past the size limit.
+    page = await fetchPublicUrl(raw, { maxBytes: MAX_PDF_BYTES });
+  } catch (err) {
+    if (err instanceof UrlFetchError) {
+      res.status(err.status).json({ error: err.message });
+    } else {
+      console.error(err);
+      res.status(502).json({ error: "Couldn't fetch that URL. Some sites block automated requests; try pasting the text." });
+    }
     return;
   }
 
-  try {
-    const response = await fetch(url, {
-      headers: { "user-agent": "SourceLens/0.1 (research summariser)" },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) {
-      res.status(502).json({ error: `The page returned HTTP ${response.status}.` });
-      return;
+  const { url, contentType, body } = page;
+  const fallbackTitle = url.hostname + url.pathname;
+  if (contentType.includes("pdf") || body.subarray(0, 5).toString() === "%PDF-") {
+    // PDF reports (common in government and academic research) go through the study-copy conversion.
+    if (!hasCredentials(res)) return;
+    try {
+      const { title, text } = await studyCopyFromPdf(body);
+      const payload: FetchUrlResponse = { title: title || fallbackTitle, text, url: url.toString() };
+      res.json(payload);
+    } catch (err) {
+      sendApiError(res, err, "reading the PDF");
     }
-    const contentType = response.headers.get("content-type") ?? "";
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (contentType.includes("pdf") || bytes.subarray(0, 5).toString() === "%PDF-") {
-      // PDF reports (common in government and academic research) go through the study-copy conversion.
-      if (bytes.length > MAX_PDF_BYTES) {
-        res.status(413).json({ error: "That PDF is too large to import. Download it and split it into parts." });
-        return;
-      }
-      if (!hasCredentials(res)) return;
-      try {
-        const { title, text } = await studyCopyFromPdf(bytes);
-        const payload: FetchUrlResponse = { title: title || url.hostname + url.pathname, text, url: url.toString() };
-        res.json(payload);
-      } catch (err) {
-        sendApiError(res, err, "reading the PDF");
-      }
-      return;
-    }
-    const bodyText = bytes.toString("utf8");
-    const extracted = contentType.includes("html") ? htmlToText(bodyText) : { title: "", text: bodyText.trim() };
-    if (!extracted.text) {
-      res.status(422).json({ error: "Couldn't find readable text on that page. Try pasting it instead." });
-      return;
-    }
-    const payload: FetchUrlResponse = {
-      title: extracted.title || url.hostname + url.pathname,
-      text: extracted.text,
-      url: url.toString(),
-    };
-    res.json(payload);
-  } catch (err) {
-    console.error(err);
-    res.status(502).json({ error: "Couldn't fetch that URL. Some sites block automated requests; try pasting the text." });
+    return;
   }
+  const bodyText = body.toString("utf8");
+  const extracted = contentType.includes("html") ? htmlToText(bodyText) : { title: "", text: bodyText.trim() };
+  if (!extracted.text) {
+    res.status(422).json({ error: "Couldn't find readable text on that page. Try pasting it instead." });
+    return;
+  }
+  const payload: FetchUrlResponse = { title: extracted.title || fallbackTitle, text: extracted.text, url: url.toString() };
+  res.json(payload);
 });
 
 // Convert a PDF source into text (tables transcribed, figures described) for summarising.

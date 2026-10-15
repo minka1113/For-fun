@@ -62,8 +62,21 @@ let turnBudgetMs = 8 * 60 * 1000;
 export function setTurnBudgetMs(ms: number | null): void {
   turnBudgetMs = ms ?? 8 * 60 * 1000;
 }
-/** A single model call (searching and reading included) that takes longer than this is abandoned. */
-const REQUEST_TIMEOUT_MS = 6 * 60 * 1000;
+/**
+ * A single model call (searching and reading included) that takes longer than this is abandoned.
+ * The SDK's own timeout stops once the response starts, so this also covers a stream that stalls.
+ */
+let requestTimeoutMs = 6 * 60 * 1000;
+/** Tests shorten the per-call time limit. */
+export function setRequestTimeoutMs(ms: number | null): void {
+  requestTimeoutMs = ms ?? 6 * 60 * 1000;
+}
+
+class StepTimeoutError extends Error {
+  constructor() {
+    super(`One step took longer than ${Math.round(requestTimeoutMs / 60000) || 1} minutes, so I stopped it. Anything found so far is in the notebook; ask me to continue.`);
+  }
+}
 const MAX_NOTEBOOK_ITEMS = 60;
 
 const SYSTEM_PROMPT = `You are a research assistant helping a researcher with the up-front research for a briefing. You search the open web and read pages to find strong sources and key facts, and you keep a shared research notebook up to date.
@@ -356,6 +369,7 @@ async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => vo
   const activity: string[] = [];
 
   let stoppedEarly = false;
+  let lastStop: BetaMessage["stop_reason"] = null;
   for (let round = 0; round < MAX_ROUNDS && !control.isClosed(); round++) {
     if (round > 0 && Date.now() - started >= turnBudgetMs) {
       stoppedEarly = true;
@@ -372,8 +386,13 @@ async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => vo
       cache_control: { type: "ephemeral" },
       ...FALLBACK,
       messages,
-    }, { timeout: REQUEST_TIMEOUT_MS, maxRetries: 1 });
+    }, { timeout: requestTimeoutMs, maxRetries: 1 });
     control.setAbort(() => stream.abort?.());
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stream.abort?.();
+    }, requestTimeoutMs);
 
     // Progress listeners must never throw: an error here would break the stream mid-turn.
     let lastStatus = "";
@@ -402,8 +421,17 @@ async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => vo
         console.error("research progress:", err);
       }
     });
-    const message: BetaMessage = await stream.finalMessage();
-    control.setAbort(null);
+    let message: BetaMessage;
+    try {
+      message = await stream.finalMessage();
+    } catch (err) {
+      if (timedOut) throw new StepTimeoutError();
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      control.setAbort(null);
+    }
+    lastStop = message.stop_reason;
     if (message.stop_reason === "refusal") throw new RefusalError();
 
     // Pages read come before any tool calls that rely on them in the same response.
@@ -422,6 +450,8 @@ async function runTurn(body: ResearchChatRequest, emit: (e: ResearchEvent) => vo
     if (message.stop_reason === "max_tokens") parts.push({ text: "\n\n(The reply was cut off because it ran too long.)", refs: [] });
     break;
   }
+  // Out of rounds while the agent was still working: it never wrote a closing reply, so say so.
+  if (!stoppedEarly && !control.isClosed() && (lastStop === "tool_use" || lastStop === "pause_turn")) stoppedEarly = true;
   if (stoppedEarly) {
     parts.push({ text: "\n\n(I paused here so this turn doesn't run too long. Everything found so far is in the notebook; ask me to continue.)", refs: [] });
   }
@@ -484,7 +514,7 @@ researchRouter.post("/chat", async (req, res) => {
   } catch (err) {
     if (closed) return; // stopped by the researcher; nobody is listening
     console.error(err);
-    const known = err instanceof RefusalError ? { error: err.message } : provider.describeError(err);
+    const known = err instanceof RefusalError || err instanceof StepTimeoutError ? { error: err.message } : provider.describeError(err);
     emit({ type: "error", error: known?.error ?? "Unexpected server error while researching." });
   } finally {
     clearInterval(heartbeat);

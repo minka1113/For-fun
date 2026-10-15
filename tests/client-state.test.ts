@@ -230,4 +230,14 @@ test("a reply that isn't an event stream (e.g. a login page) is reported clearly
   const nb = notebook();
   await startRun("p4", REQ, nb.update);
   assert.match(getRun("p4").error ?? "", /unexpected reply/);
+  assert.equal(nb.get().chat.length, 0, "a turn that never started adds no reply");
+});
+
+test("a request refused before the turn starts shows the error without a fake reply", async () => {
+  (globalThis as any).fetch = async () =>
+    new Response(JSON.stringify({ error: "Research needs the Anthropic provider." }), { status: 501, headers: { "content-type": "application/json" } });
+  const nb = notebook();
+  await startRun("p5", REQ, nb.update);
+  assert.match(getRun("p5").error ?? "", /Anthropic provider/);
+  assert.equal(nb.get().chat.length, 0);
 });
