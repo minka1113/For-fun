@@ -49,4 +49,26 @@ export const DEFAULT_STYLES: DraftStyle[] = [
       "No more than 250 words",
     ],
   },
+  {
+    id: "outline",
+    name: "Summary Outline",
+    instructions: [
+      "You are summarizing a technical document (such as a proposal, research paper, specification, or report) for a mixed audience of technical and non-technical readers. Your summary should let a busy reader understand what the document said and how it was organized, without reading it.",
+      "Produce exactly two parts, in this order, with no title, preamble, or closing remarks.",
+      "PART 1: TOP-LINE SUMMARY\nWrite one paragraph of no more than five sentences, and no more than 100 words. Cover all four of the following, combining them into the same sentence where that reads naturally:\n- The purpose of the document or the problem it addressed\n- The methods or approach it described\n- Its key findings or results\n- Its recommendations or asks",
+      "Write in plain language that a non-technical reader can follow, while staying precise enough for a technical reader. If a technical term is essential, keep it and add a brief plain-language gloss. Include specific figures or results only when they are central to the document's conclusions. If the document did not contain one of the four elements (for example, no recommendations), do not invent one; state its absence in a few words or leave it out.",
+      "PART 2: OUTLINE\nGive an indented outline of the document's structure, using its headers (top level) and subheaders (second level) only. Ignore any deeper levels. The paragraph should open with \u201cThe document outlined the following sections:\u201d followed by the outline. Reproduce headings exactly as they appear in the document, in their original order. List headings only, with no descriptions. Do not include a table of contents as an entry.",
+      'If the document has no clear headings, infer its main sections from the content, write each inferred heading as a short noun phrase (for example, "Background on Current System"), and add "[inferred]" after it. Begin the outline with the line "Note: This document had no explicit headings; the sections below were inferred."',
+      'TENSE\nWrite the summary entirely in the past tense, describing the document as something that has already been written (for example, "The proposal argued..." or "The authors found..."). This applies even to findings that remain true and to future plans the document described (for example, "The team planned to launch in Q3"). Headings copied from the document should stay exactly as written; inferred headings should be noun phrases, which avoids any tense.',
+      "Before responding, check that Part 1 has five sentences or fewer, that every sentence is in the past tense, and that the outline goes no deeper than two levels.",
+    ].join("\n\n"),
+    rules: [
+      "Exactly two parts, a top-line paragraph then an outline, with no title, preamble, or closing remarks",
+      "Top-line paragraph of no more than 5 sentences and no more than 100 words",
+      "Top-line paragraph covers purpose, methods, key findings, and recommendations, without inventing any the document lacked",
+      "Outline opens with \u201cThe document outlined the following sections:\u201d",
+      "Outline lists headings only, no more than two levels deep, with no table of contents entry",
+      'Inferred headings are short noun phrases marked "[inferred]"',
+    ],
+  },
 ];
