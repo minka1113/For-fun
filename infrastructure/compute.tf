@@ -66,10 +66,6 @@ resource "aws_ebs_volume" "data" {
     Name   = "${var.name}-data"
     Backup = var.name # picked up by the DLM snapshot policy
   }
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "aws_volume_attachment" "data" {

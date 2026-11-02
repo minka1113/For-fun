@@ -1,5 +1,6 @@
 resource "aws_ecr_repository" "app" {
   name                 = var.name
+  force_delete         = true
   image_tag_mutability = "MUTABLE" # tags are commit SHAs; mutable only so a workflow re-run doesn't fail
 
   image_scanning_configuration {

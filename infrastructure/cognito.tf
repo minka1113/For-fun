@@ -1,7 +1,7 @@
 resource "aws_cognito_user_pool" "this" {
   name                = var.name
   mfa_configuration   = "OFF"
-  deletion_protection = "ACTIVE"
+  deletion_protection = "INACTIVE"
 
   auto_verified_attributes = ["email"]
 
