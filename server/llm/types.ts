@@ -66,6 +66,8 @@ export interface GenerateRequest {
   maxTokens: number;
   /** Cache the conversation prefix between calls, where the provider supports it. */
   cache?: boolean;
+  /** Abort the call, e.g. when the browser that asked for it has gone away. */
+  signal?: AbortSignal;
 }
 
 export type StopReason = "end" | "tool_use" | "max_tokens" | "refusal";
@@ -85,6 +87,7 @@ export interface StructuredRequest<T> {
   prompt: string;
   schema: ZodType<T>;
   maxTokens: number;
+  signal?: AbortSignal;
 }
 
 export type StructuredResult<T> = { refused: true } | { refused: false; value: T | null };
@@ -107,7 +110,7 @@ export interface LlmProvider {
   /** One model turn whose reply must match `schema`. */
   structured<T>(req: StructuredRequest<T>): Promise<StructuredResult<T>>;
   /** Turn a PDF into Markdown following `prompt`. Throws with a user-facing message on failure. */
-  pdfToMarkdown(pdf: Buffer, prompt: string): Promise<string>;
+  pdfToMarkdown(pdf: Buffer, prompt: string, signal?: AbortSignal): Promise<string>;
   /** Map a failure onto an HTTP status and message, or null if it isn't one of the provider's errors. */
   describeError(err: unknown): { status: number; error: string } | null;
 }

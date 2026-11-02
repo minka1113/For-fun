@@ -27,7 +27,7 @@ import type {
 } from "./types.js";
 
 /** Request fields shared by every call: if the primary model declines, the API retries on a fallback model. */
-const FALLBACK = {
+export const FALLBACK = {
   betas: ["server-side-fallback-2026-07-01"] as string[],
   fallbacks: "default" as const,
 };
@@ -35,7 +35,7 @@ const CACHE_1H = { type: "ephemeral", ttl: "1h" } as const;
 
 /** The slice of the SDK the provider uses, so tests can substitute a fake. */
 export interface AnthropicLike {
-  beta: { messages: { stream(params: any): { finalMessage(): Promise<any> } } };
+  beta: { messages: { stream(params: any, options?: { signal?: AbortSignal }): { finalMessage(): Promise<any> } } };
 }
 
 export class AnthropicProvider implements LlmProvider {
@@ -70,7 +70,7 @@ export class AnthropicProvider implements LlmProvider {
       ...(req.cache ? { cache_control: CACHE_1H } : {}),
       ...FALLBACK,
       messages: req.messages.map(toMessage),
-    });
+    }, { signal: req.signal });
     const message: BetaMessage = await stream.finalMessage();
 
     const blocks: LlmTextBlock[] = [];
@@ -97,13 +97,13 @@ export class AnthropicProvider implements LlmProvider {
       ...FALLBACK,
       output_config: { format: betaZodOutputFormat(req.schema as any) },
       messages: [toMessage({ role: "user", text: req.prompt, docs: req.docs })],
-    });
+    }, { signal: req.signal });
     const message: BetaMessage & { parsed_output?: T | null } = await stream.finalMessage();
     if (message.stop_reason === "refusal") return { refused: true };
     return { refused: false, value: message.parsed_output ?? null };
   }
 
-  async pdfToMarkdown(pdf: Buffer, prompt: string): Promise<string> {
+  async pdfToMarkdown(pdf: Buffer, prompt: string, signal?: AbortSignal): Promise<string> {
     const stream = this.getClient().beta.messages.stream({
       model: this.model,
       max_tokens: 64000,
@@ -118,7 +118,7 @@ export class AnthropicProvider implements LlmProvider {
           ],
         },
       ],
-    });
+    }, { signal });
     const message: BetaMessage = await stream.finalMessage();
 
     if (message.stop_reason === "refusal") throw new Error("The model declined to process this PDF.");

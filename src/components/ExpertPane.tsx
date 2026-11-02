@@ -18,6 +18,7 @@ import type {
 import { expertChat, expertReview } from "../lib/api";
 import { uid } from "../lib/storage";
 import { applyQuoteEdit, fullText } from "../lib/style";
+import { ChatInput } from "./ChatInput";
 
 export function emptyExpert(): ExpertState {
   return { highlights: [], notes: [], chat: [], exportNotes: true };
@@ -312,20 +313,7 @@ export function ExpertPane(props: Props) {
             {busy === "chat" && <div className="bubble assistant muted">Thinking…</div>}
             <div ref={chatEnd} />
           </div>
-          <div className="chat-input">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send(input);
-                }
-              }}
-              placeholder="Ask the expert… (Enter to send, Shift+Enter for a new line)"
-            />
-            <button className="primary" disabled={!input.trim() || busy !== null} onClick={() => send(input)}>Send</button>
-          </div>
+          <ChatInput value={input} onChange={setInput} onSend={send} disabled={busy !== null} placeholder="Ask the expert…" />
           {expert.chat.length > 0 && (
             <button className="link small pad" onClick={() => confirm("Clear this conversation?") && update({ chat: [] })}>Clear conversation</button>
           )}

@@ -7,8 +7,9 @@ Add sources, summarise them with Claude, and read the draft next to the source t
 ## Features
 
 - **Projects**: one per briefing. Each holds its sources, drafts, research question, attached knowledge packs and expert brief. Switch projects from the top of the sidebar.
+- **Research agent** (🔎 Research, at the top of each project): chat with an agent that turns a topic into a research question and sub-questions, searches the open web (preferring government and academic sources), reads the most promising pages, and fills a notebook: candidate **sources** (labelled by type, with cautions and paywall flags), **findings** with verbatim quotes (marked "checked" when the quote was found in a page it read), and **gaps**. **Add as source** imports a page or PDF into the project; **Start briefing** selects the imported sources and moves on to drafting. The notebook is working notes only: drafts are written from the sources you add. Needs the Anthropic provider.
 - **Sources**: paste text, upload text files or **PDFs** (converted with tables transcribed and figures described), or fetch a web page by URL.
-- **Drafting styles**: Executive summary, Brief, Detailed and Bullet points out of the box. Choose **Edit styles…** in the style menu to change their instructions or add your own.
+- **Briefing styles with built-in rules**: Executive summary, Brief, Detailed and Bullet points out of the box. Each style has instructions for shaping the draft and its own writing rules (structure, length, format), and every style also follows a shared "Always apply" list (e.g. past tense; facts only from the sources). Choose **Edit styles and rules…** in the style menu to edit, duplicate or add styles.
 - **Side-by-side comparison**
   - Hover a draft sentence to highlight the source passages behind it; the source pane scrolls to them.
   - Hover a highlighted source passage to see which sentences cite it; click it to jump there.
@@ -16,7 +17,7 @@ Add sources, summarise them with Claude, and read the draft next to the source t
   - Uncited statements get a wavy underline so you know to check them.
   - Per-source **coverage bars** show how much of each source the draft drew on.
 - **Review workflow**: pin a claim to see its quotes, then mark it ✓ supported or ⚑ flagged. Keyboard: `j`/`k` next/previous claim, `v` verify, `f` flag, `Esc` unpin.
-- **Style rules**: plain-English writing rules (e.g. "Always in past tense", "No more than 250 words"). New drafts follow them, and **Check style** reviews a draft rule by rule with suggested fixes. Word limits are counted by the app; Claude judges the rest.
+- **Style check**: **Check style** reviews a draft rule by rule against its style's rules plus the shared ones, with suggested fixes. The Style tab can also check a draft against another style's rules. Word limits for the whole draft are counted by the app; Claude judges the rest.
 - **Editing**: edit any sentence from the Claim tab. Edits and applied fixes keep the sentence's links to the source and send it back to unreviewed.
 - **Subject-matter expert** (✦ Expert button on a draft)
   - Draws on the project's **knowledge packs** (your background papers) and on its own trained knowledge, and always labels which: *Library*, *General knowledge* or both. Library citations open the passage in the paper.
@@ -58,6 +59,7 @@ The local model has no citations feature, PDF input or enforced JSON, so the app
 - **Structured replies** (style check, expert review): the schema goes in the prompt and the reply is validated, with one retry.
 - **PDFs**: text is extracted and marked by page. Tables come out as running text, figures aren't described, and scanned PDFs are rejected. Use the Anthropic provider for PDFs with important tables or figures. The expert's "view original PDF" tool is unavailable.
 - **Limits**: the size limits above are set for Claude's large context window. If your local server has a smaller context, big projects fail with the server's error.
+- **Research agent**: unavailable. It relies on Claude's web search and web fetch tools.
 
 ## Tests
 
@@ -79,15 +81,18 @@ These are for the Anthropic provider (`claude-opus-5` by default; set `ANTHROPIC
 - Converting a PDF to a study copy: roughly 20–40¢ per short paper, once.
 - Expert review, or the first chat question in a session: roughly $1–2 with two full knowledge packs, less with smaller libraries. Follow-up questions within the hour cost roughly 10–20¢, because the library is cached for an hour.
 
+- A research turn: roughly 50¢–$3 depending on how many searches and pages it reads (pages read within a turn are cached, which keeps resends cheap). Web search is billed at $10 per 1,000 searches on top of tokens; each turn is capped at 8 searches and 6 page reads. Web search may need to be enabled for your organisation in the Claude Console.
+
 Every request enables the API's server-side fallback, so if the model declines a request it is retried on a fallback model in the same call.
 
 ## How it works
 
-- `server/llm/`: the model providers behind one interface (`types.ts`): `anthropic.ts` (Claude) and `local.ts` (OpenAI-compatible servers), chosen by `config.ts`. Routes never call a vendor SDK directly.
+- `server/llm/`: the model providers behind one interface (`types.ts`): `anthropic.ts` (Claude) and `local.ts` (OpenAI-compatible servers), chosen by `config.ts`. Routes don't call a vendor SDK directly, except the research agent below.
 - `server/app.ts`: routes for summarising (plain-text `document` blocks with citations; output split into cited **segments**), style checks (structured outputs), PDF extraction for sources, and URL import.
 - `server/expert.ts`: the expert. Papers are labelled `[B1]…` and sources `[S1]…` in document titles, so citations and tool inputs map back reliably. Review uses structured outputs; chat runs a tool loop (`suggest_edit`, `add_context_note`, `mark_key_passage`, `view_original_pdf`) whose actions come back to the browser as suggestion cards. Background papers and sources use one-hour prompt caching.
+- `server/research.ts`: the research agent. It uses Claude's server-side web search and web fetch tools directly (so it needs the Anthropic provider) plus its own notebook tools (`update_plan`, `propose_source`, `record_finding`, `note_gap`), resumes paused turns, and streams progress to the browser as server-sent events. Finding quotes are checked against the text of pages it read.
 - `server/index.ts` starts the server. `server/packs.ts` and `server/study.ts`: knowledge-pack storage and the PDF-to-study-copy conversion queue.
-- `src/components/CompareView.tsx` and `ExpertPane.tsx`: the side-by-side view and the expert panel. Source text is split at every citation and key-passage boundary (`src/lib/spans.ts`) so overlapping highlights render correctly.
+- `src/components/CompareView.tsx` and `ExpertPane.tsx`: the side-by-side view and the expert panel (with `DraftText`, `SourceText` and `Inspector` for its parts). Source text is split at every citation and key-passage boundary (`src/lib/spans.ts`) so overlapping highlights render correctly.
 - `shared/`: types, default rules and drafting styles shared by server and browser.
 
 ## Limitations
@@ -95,3 +100,4 @@ Every request enables the API's server-side fallback, so if the model declines a
 - The expert reads whole study copies, up to about 400,000 words across a project's packs and sources. Larger libraries would need search, which isn't built yet.
 - Study copies are made by the model reading the PDF. Check tables and figure descriptions that matter using the paper's side-by-side review screen.
 - URL import uses a simple HTML-to-text extractor, so some pages need tidying after import.
+- URL import refuses addresses on private or internal networks (including `localhost`), so the server can't be used to reach internal services. To import from a machine on your own network, start the server with `ALLOW_PRIVATE_URLS=1`.

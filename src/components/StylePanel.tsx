@@ -1,7 +1,16 @@
+import type { DraftStyle } from "../../shared/types";
 import type { RuleRow } from "../lib/style";
 
 interface Props {
   rows: RuleRow[];
+  styles: DraftStyle[];
+  /** The style whose rules this draft is checked against. */
+  checkStyleId: string;
+  /** The style the draft was written in. */
+  ownStyleId: string;
+  /** True when the draft's own style was deleted. */
+  ownStyleMissing: boolean;
+  onChangeCheckStyle: (id: string) => void;
   checking: boolean;
   error: string | null;
   checkedAt?: number;
@@ -22,13 +31,29 @@ export function StylePanel(props: Props) {
 
   return (
     <div className="style-panel">
+      {props.ownStyleMissing && (
+        <p className="ruleset-notice">The style this draft was written in has been deleted. Pick a style below to check against.</p>
+      )}
+      <div className="style-head">
+        <label className="toggle">
+          Check against:
+          <select value={props.checkStyleId} onChange={(e) => props.onChangeCheckStyle(e.target.value)} aria-label="Style rules to check against">
+            {props.styles.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.id === props.ownStyleId ? " (this draft's style)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="link" onClick={props.onEditRules}>Edit rules</button>
+      </div>
       <div className="style-head">
         <div className="muted small">
           {props.checkedAt ? `Last checked ${new Date(props.checkedAt).toLocaleString()}` : "Not checked yet"}
           {props.stale && <span className="warn-text"> · the draft changed since, so re-check to confirm</span>}
         </div>
         <div className="toolbar">
-          <button className="link" onClick={props.onEditRules}>Edit rules</button>
           {needsClaude && (
             <button className="primary" disabled={props.checking} onClick={props.onCheck}>
               {props.checking ? "Checking…" : props.checkedAt ? "Re-check style" : "Check style"}
@@ -37,7 +62,7 @@ export function StylePanel(props: Props) {
         </div>
       </div>
       {props.error && <p className="error small">{props.error}</p>}
-      {rows.length === 0 && <p className="muted small">No style rules yet. Add some with “Edit rules”.</p>}
+      {rows.length === 0 && <p className="muted small">This style has no rules yet. Add some with “Edit rules”.</p>}
 
       <ul className="rule-list">
         {rows.map((row, i) => (

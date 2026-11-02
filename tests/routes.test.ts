@@ -270,3 +270,38 @@ test("Anthropic without an API key fails clearly", async () => {
     if (saved.token !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = saved.token;
   }
 });
+
+test("closing the browser tab stops the model call it started", async () => {
+  let aborted!: () => void;
+  const stopped = new Promise<void>((r) => (aborted = r));
+  const client: AnthropicLike = {
+    beta: {
+      messages: {
+        stream(_params, options) {
+          // Never finishes on its own: only an abort ends it.
+          return {
+            finalMessage: () =>
+              new Promise((_resolve, reject) =>
+                options?.signal?.addEventListener("abort", () => {
+                  aborted();
+                  reject(new Error("aborted"));
+                }),
+              ),
+          };
+        },
+      },
+    },
+  };
+  setProvider(new AnthropicProvider("claude-test", client));
+  const leaving = new AbortController();
+  const request = fetch(`${base}/api/summarize`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sources: [SOURCE] }),
+    signal: leaving.signal,
+  }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 50));
+  leaving.abort();
+  await request;
+  await Promise.race([stopped, new Promise((_, reject) => setTimeout(() => reject(new Error("the model call kept running")), 2000))]);
+});

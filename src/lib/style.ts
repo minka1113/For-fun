@@ -74,6 +74,7 @@ export function replaceRange(
   const out: Segment[] = [];
   let offset = 0;
   let merged: Segment | null = null;
+  let mergedIndex = -1;
   const changed: string[] = [];
   for (const seg of segments) {
     const segStart = offset;
@@ -88,27 +89,50 @@ export function replaceRange(
     const after = end < segEnd ? seg.text.slice(end - segStart) : "";
     if (!merged) {
       merged = { ...seg, text: before + replacement + after, citations: [...seg.citations], edited: true };
+      mergedIndex = out.length;
       out.push(merged);
     } else {
       merged.text += after;
       merged.citations.push(...seg.citations);
     }
   }
-  return { segments: tidy(out), changed };
+  return { segments: mergedIndex === -1 ? out : tidy(out, mergedIndex), changed };
 }
 
-/** Drop segments that are now empty, and collapse doubled spaces left behind by deletions. */
-function tidy(segments: Segment[]): Segment[] {
+/**
+ * Collapse doubled spaces left behind by an edit, then drop segments that are now empty. Only the
+ * edited segment, the whitespace-only segments around it and the edges of its neighbours are
+ * touched, so text elsewhere in the draft (such as "a ratio of 3 : 1") is never altered.
+ */
+function tidy(segments: Segment[], edited: number): Segment[] {
   const text = segments.map((s) => s.text);
-  for (let i = 0; i < text.length; i++) {
-    text[i] = text[i].replace(/ {2,}/g, " ").replace(/ +([.,;:\n])/g, "$1");
+  const blank = (i: number) => /^\s*$/.test(text[i]);
+  let first = edited;
+  let last = edited;
+  while (first > 0 && blank(first - 1)) first--;
+  while (last < text.length - 1 && blank(last + 1)) last++;
+  const lo = Math.max(0, first - 1); // neighbours: only their touching edge is trimmed
+  const hi = Math.min(text.length - 1, last + 1);
+
+  for (let i = first; i <= last; i++) text[i] = text[i].replace(/ {2,}/g, " ").replace(/ +([.,;:\n])/g, "$1");
+  // The nearest segment before i that still has text (an edit can leave segments empty).
+  const before = (i: number) => {
+    let j = i - 1;
+    while (j >= lo && text[j] === "") j--;
+    return j;
+  };
+  for (let i = lo + 1; i <= hi; i++) {
+    const p = before(i);
+    if (p < lo || text[i] === "") continue;
     // A space at the end of one segment followed by one at the start of the next.
-    if (i > 0 && text[i].startsWith(" ") && /\s$/.test(text[i - 1])) text[i] = text[i].slice(1);
+    if (text[i].startsWith(" ") && /\s$/.test(text[p])) text[i] = text[i].slice(1);
+    // A space before punctuation that starts the next segment.
+    if (/^[.,;:]/.test(text[i]) && / $/.test(text[p]) && p >= first) text[p] = text[p].replace(/ +$/, "");
   }
   // Trailing spaces before a line break that starts a later segment (skipping emptied ones).
-  for (let i = text.length - 1; i > 0; i--) {
+  for (let i = hi; i > lo; i--) {
     if (!text[i].startsWith("\n")) continue;
-    for (let j = i - 1; j >= 0; j--) {
+    for (let j = i - 1; j >= lo; j--) {
       text[j] = text[j].replace(/ +$/, "");
       if (text[j]) break;
     }

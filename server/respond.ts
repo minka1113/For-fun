@@ -10,8 +10,18 @@ export function hasCredentials(res: express.Response): boolean {
   return false;
 }
 
+/** A signal that fires if the browser disconnects before the reply is sent, so model calls stop too. */
+export function abortOnClose(res: express.Response): AbortSignal {
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) controller.abort();
+  });
+  return controller.signal;
+}
+
 /** Map a failure onto a response the client can show. */
 export function sendApiError(res: express.Response, err: unknown, action: string): void {
+  if (res.destroyed) return; // the browser left; nobody to tell
   console.error(err);
   const known = getProvider().describeError(err);
   if (known) res.status(known.status).json({ error: known.error });

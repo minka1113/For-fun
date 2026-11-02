@@ -1,8 +1,9 @@
-import type { Pack, Project } from "../../shared/types";
+import type { DraftStyle, Pack, Project } from "../../shared/types";
 import { parseWordLimit } from "../../shared/rules";
 
 export type View =
   | { kind: "home" }
+  | { kind: "research" }
   | { kind: "summary"; id: string }
   | { kind: "source"; id: string }
   | { kind: "library" }
@@ -15,7 +16,10 @@ interface Props {
   packs: Pack[];
   selected: Set<string>;
   view: View;
-  rules: string[];
+  styles: DraftStyle[];
+  /** The style selected for new drafts. */
+  composerStyle: DraftStyle;
+  sharedRules: string[];
   onSwitchProject: (id: string) => void;
   onNewProject: () => void;
   onProjectSettings: () => void;
@@ -54,6 +58,10 @@ export function Sidebar(props: Props) {
           <button onClick={props.onProjectSettings} title="Project settings" aria-label="Project settings">⚙</button>
         </div>
         {project.question && <p className="muted small question">“{project.question}”</p>}
+        <button className={`research-link ${view.kind === "research" ? "current" : ""}`} onClick={() => props.onOpen({ kind: "research" })}>
+          <span className="side-title">🔎 Research</span>
+          <span className="side-meta">{researchMeta(project)}</span>
+        </button>
       </div>
 
       <div className="side-section">
@@ -115,12 +123,14 @@ export function Sidebar(props: Props) {
 
       <div className="side-section">
         <div className="side-head">
-          <span>Style rules</span>
+          <span>Rules: {props.composerStyle.name}</span>
           <button className="link" onClick={props.onEditRules}>edit</button>
         </div>
-        {props.rules.length === 0 && <p className="muted small">No rules. Add writing rules to check drafts against.</p>}
+        {props.sharedRules.length + props.composerStyle.rules.length === 0 && (
+          <p className="muted small">No rules for this style. Add writing rules to check drafts against.</p>
+        )}
         <ul className="side-rules">
-          {props.rules.map((r, i) => (
+          {[...props.sharedRules, ...props.composerStyle.rules.filter((r) => !props.sharedRules.includes(r))].map((r, i) => (
             <li key={i} title={parseWordLimit(r) ? "Counted by the app" : "Checked by Claude"}>{r}</li>
           ))}
         </ul>
@@ -160,6 +170,14 @@ export function Sidebar(props: Props) {
       </div>
     </aside>
   );
+}
+
+function researchMeta(project: Project): string {
+  const r = project.research;
+  if (!r || (r.chat.length === 0 && r.candidates.length === 0)) return "Plan and gather sources with the research agent";
+  const found = r.candidates.filter((c) => c.status !== "dismissed").length;
+  const added = r.candidates.filter((c) => c.status === "added").length;
+  return `${found} source${found === 1 ? "" : "s"} found · ${added} added · ${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}`;
 }
 
 function words(text: string): string {
